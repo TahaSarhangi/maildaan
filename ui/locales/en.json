@@ -1,0 +1,204 @@
+{
+  "appName": "MailDaan",
+  "copyright": "© 2026 MailDaan",
+  "developedBy": "Developed by",
+  "developer": "Titanium",
+
+  "chooseLanguage": "Choose your language",
+  "persian": "فارسی",
+  "english": "English",
+  "continue": "Continue",
+
+  "nav": {
+    "archive": "Archive",
+    "settings": "Settings",
+    "syncEmails": "Sync Emails",
+    "exportExcel": "Export to Excel"
+  },
+  "languageSwitchTitle": "Language",
+
+  "config": {
+    "title": "Email Account",
+    "subtitle": "Configure your IMAP account to start archiving.",
+    "imapServer": "IMAP Server",
+    "imapPort": "IMAP Port",
+    "username": "Email Address / Username",
+    "password": "Password",
+    "startSync": "Start Synchronization",
+    "fillAllFields": "Please fill in all fields.",
+    "invalidPort": "Port must be a number between 1 and 65535.",
+    "connecting": "Connecting and calculating workload…",
+    "requirements": "Your password is used only for this synchronization and is never stored."
+  },
+
+  "settings": {
+    "title": "Settings",
+    "language": "Interface Language",
+    "imapServer": "IMAP Server",
+    "imapPort": "IMAP Port",
+    "username": "Email Address / Username",
+    "save": "Save Settings",
+    "saved": "Settings saved.",
+    "note": "The password is never stored. You will be asked for it when syncing."
+  },
+
+  "sync": {
+    "title": "Synchronization",
+    "totalPending": "Pending messages",
+    "processed": "Processed",
+    "speed": "Speed",
+    "eta": "Estimated remaining",
+    "foldersProgress": "Folders",
+    "currentFolder": "Current folder",
+    "folderPending": "Pending in folder",
+    "cancel": "Cancel",
+    "preparing": "Discovering folders and counting messages…",
+    "running": "Running",
+    "statusRunning": "Running",
+    "statusCompleted": "Completed",
+    "statusIncomplete": "Completed with errors",
+    "statusCancelled": "Cancelled",
+    "statusError": "Failed",
+    "cancelConfirm": "Cancel synchronization? Downloaded messages will be kept and the next sync will resume.",
+    "syncActiveExit": "Synchronization is still running. Exit anyway? Progress will be saved and the next sync resumes from the checkpoint."
+  },
+
+  "report": {
+    "title": "Synchronization Report",
+    "status": "Status",
+    "foldersProcessed": "Folders processed",
+    "newMessages": "New messages downloaded",
+    "deduped": "Already archived (deduplicated)",
+    "archived": "Total archived messages",
+    "contacts": "Total contacts",
+    "attachments": "Total attachments",
+    "errors": "Errors",
+    "elapsed": "Elapsed time",
+    "errorFolders": "Folders with errors",
+    "openViewer": "Open Archived Emails",
+    "syncAgain": "Sync Again",
+    "nothingToDo": "No new messages. Your archive is up to date."
+  },
+
+  "folders": {
+    "allEmails": "All Emails",
+    "messages": "messages",
+    "map": {
+      "Inbox": "Inbox",
+      "Sent": "Sent",
+      "Drafts": "Drafts",
+      "Trash": "Trash",
+      "Junk": "Junk",
+      "Spam": "Spam",
+      "Archive": "Archive",
+      "All Mail": "All Mail",
+      "Important": "Important",
+      "Starred": "Starred",
+      "Flagged": "Flagged",
+      "Outbox": "Outbox",
+      "Templates": "Templates"
+    }
+  },
+
+  "list": {
+    "from": "From",
+    "to": "To",
+    "subject": "Subject",
+    "date": "Date",
+    "attachments": "Attachments",
+    "noResults": "No messages match your search or filters.",
+    "emptyArchive": "Your archive is empty. Sync your emails to get started.",
+    "page": "Page",
+    "of": "of",
+    "prev": "Previous",
+    "next": "Next",
+    "searchPlaceholder": "Search sender, recipient, subject or body…"
+  },
+
+  "filters": {
+    "title": "Filters",
+    "folder": "Folder",
+    "dateFrom": "Date from",
+    "dateTo": "Date to",
+    "party": "Sender or recipient",
+    "apply": "Apply",
+    "reset": "Reset Filters",
+    "sort": "Sort",
+    "newest": "Newest first",
+    "oldest": "Oldest first",
+    "sender": "Sender",
+    "subject": "Subject",
+    "anyFolder": "All folders"
+  },
+
+  "viewer": {
+    "from": "From",
+    "to": "To",
+    "cc": "CC",
+    "bcc": "BCC",
+    "date": "Date",
+    "subject": "Subject",
+    "attachments": "Attachments",
+    "saveAttachment": "Save",
+    "saveAllAttachments": "Save All",
+    "originalEml": "Original EML",
+    "saveEml": "Save original message (.eml)",
+    "noSubject": "(No subject)",
+    "htmlNotice": "This message has no plain-text part. Displayed from original HTML with scripts and remote content disabled.",
+    "folders": "Folders"
+  },
+
+  "export": {
+    "title": "Export to Excel",
+    "inProgress": "Generating Excel workbook…",
+    "done": "Excel report created.",
+    "failed": "Excel export failed.",
+    "saveTitle": "Save MailDaan report",
+    "defaultName": "maildaan-report",
+    "filterName": "Excel Workbook",
+    "messages": "messages,",
+    "contacts": "contacts,",
+    "organizations": "organizations"
+  },
+
+  "common": {
+    "close": "Close",
+    "ok": "OK",
+    "cancel": "Cancel",
+    "yes": "Yes",
+    "no": "No",
+    "confirmExit": "Exit MailDaan?",
+    "savedToFile": "Saved to:",
+    "saveFailed": "Could not save the file.",
+    "webView2Missing": "MailDaan needs the Microsoft Edge WebView2 runtime, which is not installed. Please download it from https://developer.microsoft.com/microsoft-edge/webview2/ and start MailDaan again.",
+    "seconds": "s",
+    "messagesPerSecond": "msg/s",
+    "minutes": "min"
+  },
+
+  "excel": {
+    "sheetMessages": "Messages",
+    "sheetContacts": "Contacts",
+    "sheetOrganizations": "Organizations",
+    "colDate": "Date",
+    "colSenderName": "Sender name",
+    "colSenderEmail": "Sender email",
+    "colRecipients": "Recipients",
+    "colCc": "CC",
+    "colBcc": "BCC",
+    "colSubject": "Subject",
+    "colBody": "Body",
+    "colFolder": "Folder",
+    "colAttachments": "Attachments",
+    "colEml": "Original EML",
+    "colContactName": "Contact name",
+    "colEmail": "Email address",
+    "colDomain": "Email domain",
+    "colFirst": "First communication",
+    "colLast": "Last communication",
+    "colMessages": "Messages",
+    "colSent": "Sent",
+    "colReceived": "Received",
+    "colRelatedContacts": "Related contacts"
+  }
+}

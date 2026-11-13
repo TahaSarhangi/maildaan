@@ -1,0 +1,204 @@
+{
+  "appName": "میل‌دان",
+  "copyright": "© ۲۰۲۶ میل‌دان",
+  "developedBy": "توسعه‌دهنده:",
+  "developer": "Titanium",
+
+  "chooseLanguage": "زبان خود را انتخاب کنید",
+  "persian": "فارسی",
+  "english": "English",
+  "continue": "ادامه",
+
+  "nav": {
+    "archive": "آرشیو",
+    "settings": "تنظیمات",
+    "syncEmails": "به‌روزرسانی ایمیل‌ها",
+    "exportExcel": "خروجی اکسل"
+  },
+  "languageSwitchTitle": "زبان",
+
+  "config": {
+    "title": "حساب ایمیل",
+    "subtitle": "برای شروع آرشیو، حساب IMAP خود را پیکربندی کنید.",
+    "imapServer": "سرور IMAP",
+    "imapPort": "پورت IMAP",
+    "username": "آدرس ایمیل / نام کاربری",
+    "password": "رمز عبور",
+    "startSync": "شروع همگام‌سازی",
+    "fillAllFields": "لطفاً همه فیلدها را پر کنید.",
+    "invalidPort": "پورت باید عددی بین ۱ و ۶۵۵۳۵ باشد.",
+    "connecting": "در حال اتصال و محاسبه حجم کار…",
+    "requirements": "رمز عبور فقط برای این همگام‌سازی استفاده می‌شود و هرگز ذخیره نمی‌گردد."
+  },
+
+  "settings": {
+    "title": "تنظیمات",
+    "language": "زبان رابط کاربری",
+    "imapServer": "سرور IMAP",
+    "imapPort": "پورت IMAP",
+    "username": "آدرس ایمیل / نام کاربری",
+    "save": "ذخیره تنظیمات",
+    "saved": "تنظیمات ذخیره شد.",
+    "note": "رمز عبور هرگز ذخیره نمی‌شود. هنگام همگام‌سازی از شما پرسیده می‌شود."
+  },
+
+  "sync": {
+    "title": "همگام‌سازی",
+    "totalPending": "ایمیل‌های باقی‌مانده",
+    "processed": "پردازش‌شده",
+    "speed": "سرعت",
+    "eta": "زمان باقی‌مانده",
+    "foldersProgress": "پوشه‌ها",
+    "currentFolder": "پوشه فعلی",
+    "folderPending": "باقی‌مانده در پوشه",
+    "cancel": "لغو",
+    "preparing": "در حال کشف پوشه‌ها و شمارش پیام‌ها…",
+    "running": "در حال اجرا",
+    "statusRunning": "در حال اجرا",
+    "statusCompleted": "تکمیل شد",
+    "statusIncomplete": "تکمیل شد با خطا",
+    "statusCancelled": "لغو شد",
+    "statusError": "ناموفق",
+    "cancelConfirm": "همگام‌سازی لغو شود؟ پیام‌های دانلودشده حفظ می‌شوند و همگام‌سازی بعدی از همان نقطه ادامه می‌یابد.",
+    "syncActiveExit": "همگام‌سازی همچنان در حال اجراست. با این حال خارج می‌شوید؟ پیشرفت ذخیره می‌شود و همگام‌سازی بعدی از نقطه کنترل ادامه می‌یابد."
+  },
+
+  "report": {
+    "title": "گزارش همگام‌سازی",
+    "status": "وضعیت",
+    "foldersProcessed": "پوشه‌های پردازش‌شده",
+    "newMessages": "پیام‌های جدید دانلودشده",
+    "deduped": "قبلاً آرشیو شده (تکثیر حذف شد)",
+    "archived": "کل پیام‌های آرشیو‌شده",
+    "contacts": "کل مخاطبین",
+    "attachments": "کل پیوست‌ها",
+    "errors": "خطاها",
+    "elapsed": "زمان سپری‌شده",
+    "errorFolders": "پوشه‌های دارای خطا",
+    "openViewer": "باز کردن ایمیل‌های آرشیو‌شده",
+    "syncAgain": "همگام‌سازی مجدد",
+    "nothingToDo": "پیام جدیدی وجود ندارد. آرشیو شما به‌روز است."
+  },
+
+  "folders": {
+    "allEmails": "همه ایمیل‌ها",
+    "messages": "پیام",
+    "map": {
+      "Inbox": "صندوق ورودی",
+      "Sent": "ارسال‌شده",
+      "Drafts": "پیش‌نویس‌ها",
+      "Trash": "سطل زباله",
+      "Junk": "هرزنامه",
+      "Spam": "هرزنامه",
+      "Archive": "آرشیو",
+      "All Mail": "همه ایمیل‌ها",
+      "Important": "مهم",
+      "Starred": "ستاره‌دار",
+      "Flagged": "پرچم‌دار",
+      "Outbox": "صندوق خروجی",
+      "Templates": "الگوها"
+    }
+  },
+
+  "list": {
+    "from": "از",
+    "to": "به",
+    "subject": "موضوع",
+    "date": "تاریخ",
+    "attachments": "پیوست‌ها",
+    "noResults": "هیچ پیامی با جستجو یا فیلتر شما مطابقت ندارد.",
+    "emptyArchive": "آرشیو شما خالی است. برای شروع، ایمیل‌های خود را همگام کنید.",
+    "page": "صفحه",
+    "of": "از",
+    "prev": "قبلی",
+    "next": "بعدی",
+    "searchPlaceholder": "جستجو در فرستنده، گیرنده، موضوع یا متن…"
+  },
+
+  "filters": {
+    "title": "فیلترها",
+    "folder": "پوشه",
+    "dateFrom": "از تاریخ",
+    "dateTo": "تا تاریخ",
+    "party": "فرستنده یا گیرنده",
+    "apply": "اعمال",
+    "reset": "بازنشانی فیلترها",
+    "sort": "مرتب‌سازی",
+    "newest": "جدیدترین اول",
+    "oldest": "قدیمی‌ترین اول",
+    "sender": "فرستنده",
+    "subject": "موضوع",
+    "anyFolder": "همه پوشه‌ها"
+  },
+
+  "viewer": {
+    "from": "از",
+    "to": "به",
+    "cc": "رونوشت",
+    "bcc": "رونوشت مخفی",
+    "date": "تاریخ",
+    "subject": "موضوع",
+    "attachments": "پیوست‌ها",
+    "saveAttachment": "ذخیره",
+    "saveAllAttachments": "ذخیره همه",
+    "originalEml": "فایل اصلی EML",
+    "saveEml": "ذخیره پیام اصلی (.eml)",
+    "noSubject": "(بدون موضوع)",
+    "htmlNotice": "این پیام بخش متنی ساده ندارد. از روی HTML اصلی با اسکریپت‌ها و محتوای Remote غیرفعال نمایش داده می‌شود.",
+    "folders": "پوشه‌ها"
+  },
+
+  "export": {
+    "title": "خروجی اکسل",
+    "inProgress": "در حال ساخت فایل اکسل…",
+    "done": "گزارش اکسل ساخته شد.",
+    "failed": "خروجی اکسل ناموفق بود.",
+    "saveTitle": "ذخیره گزارش میل‌دان",
+    "defaultName": "maildaan-report",
+    "filterName": "فایل اکسل",
+    "messages": "پیام،",
+    "contacts": "مخاطب،",
+    "organizations": "سازمان"
+  },
+
+  "common": {
+    "close": "بستن",
+    "ok": "تأیید",
+    "cancel": "لغو",
+    "yes": "بله",
+    "no": "خیر",
+    "confirmExit": "خروج از میل‌دان؟",
+    "savedToFile": "ذخیره شد در:",
+    "saveFailed": "ذخیره فایل امکان‌پذیر نشد.",
+    "webView2Missing": "میل‌دان به زمان اجرای Microsoft Edge WebView2 نیاز دارد که نصب نیست. لطفاً آن را از https://developer.microsoft.com/microsoft-edge/webview2/ دانلود کرده و میل‌دان را دوباره اجرا کنید.",
+    "seconds": "ثانیه",
+    "messagesPerSecond": "پیام/ثانیه",
+    "minutes": "دقیقه"
+  },
+
+  "excel": {
+    "sheetMessages": "ایمیل‌ها",
+    "sheetContacts": "مخاطبان",
+    "sheetOrganizations": "سازمان‌ها",
+    "colDate": "تاریخ",
+    "colSenderName": "نام فرستنده",
+    "colSenderEmail": "ایمیل فرستنده",
+    "colRecipients": "گیرندگان",
+    "colCc": "رونوشت",
+    "colBcc": "رونوشت مخفی",
+    "colSubject": "موضوع",
+    "colBody": "متن پیام",
+    "colFolder": "پوشه",
+    "colAttachments": "پیوست‌ها",
+    "colEml": "فایل EML اصلی",
+    "colContactName": "نام مخاطب",
+    "colEmail": "آدرس ایمیل",
+    "colDomain": "دامنه ایمیل",
+    "colFirst": "اولین ارتباط",
+    "colLast": "آخرین ارتباط",
+    "colMessages": "تعداد پیام‌ها",
+    "colSent": "ارسالی",
+    "colReceived": "دریافتی",
+    "colRelatedContacts": "مخاطبین مرتبط"
+  }
+}
