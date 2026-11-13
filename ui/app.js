@@ -156,6 +156,35 @@ async function applyLanguage(lang) {
   if (state.view === "viewer") loadMessages();
 }
 
+/* ---------------------------------------------------- first-run language choice */
+
+function bindLanguageScreen() {
+  $("btnLangFa").addEventListener("click", () => chooseLanguage("fa"));
+  $("btnLangEn").addEventListener("click", () => chooseLanguage("en"));
+}
+
+/* Save the choice, switch the interface and continue to the next screen. */
+async function chooseLanguage(lang) {
+  const bridge = api();
+  if (!bridge) return;
+  const res = await bridge.setLanguage(lang);
+  if (res && res.error) return;
+  $("langSelect").value = lang;
+  await applyLanguage(lang);
+  if (state.configured) {
+    updateNav("archive");
+    show("Archive");
+    loadFolders();
+    loadMessages();
+    return;
+  }
+  const settings = await bridge.getSettings();
+  $("cfgHost").value = settings.imap_host || "";
+  $("cfgPort").value = settings.imap_port || 993;
+  $("cfgUser").value = settings.username || "";
+  show("Config");
+}
+
 /* ------------------------------------------------------------------ folders */
 
 async function loadFolders() {
@@ -627,6 +656,7 @@ async function bootstrap() {
   bindConfigForm();
   bindSettingsForm();
   bindSearchAndFilters();
+  bindLanguageScreen();
   $("btnBack").addEventListener("click", () => { updateNav("archive"); show("Archive"); loadFolders(); loadMessages(); });
 
   const initial = await api().getInitialState();
@@ -658,7 +688,14 @@ async function bootstrap() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  const start = () => { if (api()) bootstrap(); else setTimeout(start, 120); };
+  // 'pywebviewready' and the fallback timer can both fire, so make sure the
+  // interface is only bootstrapped (and its handlers bound) once.
+  let started = false;
+  const start = () => {
+    if (started || !api()) return;
+    started = true;
+    bootstrap();
+  };
   if (window.pywebview && window.pywebview.readyState === 1) start();
   else {
     window.addEventListener("pywebviewready", start);

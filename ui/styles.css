@@ -29,10 +29,6 @@ html, body {
 
 body[dir="rtl"] { direction: rtl; }
 
-body[dir="rtl"] {
-  font-family: Vazirmatn, "Segoe UI", Tahoma, sans-serif;
-}
-
 @font-face {
   font-family: "Vazirmatn";
   src: url("fonts/Vazirmatn-Regular.woff2") format("woff2");
@@ -414,3 +410,12 @@ body[dir="rtl"] {
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: #c4cdd9; border-radius: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* Persian interface elements always use the bundled Vazirmatn. It is matched
+   on the lang attribute (not on direction) so it also applies to the first-run
+   language screen, where no RTL direction has been chosen yet, and to Persian
+   labels inside an LTR layout. The rule sits last so that it wins ties with
+   the per-component `font-family: inherit` declarations above. */
+[lang="fa"], body[dir="rtl"] {
+  font-family: Vazirmatn, "Segoe UI", Tahoma, sans-serif;
+}
