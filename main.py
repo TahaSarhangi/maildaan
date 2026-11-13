@@ -15,6 +15,7 @@ import traceback
 
 import webview
 
+import accounts
 import config
 import dialogs
 import export
@@ -43,75 +44,166 @@ class AppApi:
     """Bridge API exposed to the frontend as window.pywebview.api."""
 
     def __init__(self):
+        # One-time, non-destructive adoption of a MailDaan 1.0 archive.
+        try:
+            legacy = accounts.adopt_legacy_account()
+            if legacy:
+                logger.info("adopted legacy single-account archive for %s",
+                            legacy.get("email") or "(unknown)")
+        except Exception:
+            logger.error("legacy adoption failed\n%s", traceback.format_exc())
         self.settings = config.load_settings()
         self.sync_state = None
         self.cancel_event = None
         self.sync_thread = None
+        self.sync_account_id = None
         self.last_report = None
         self._password = ""  # in-memory only, cleared when sync ends
         self._lock = threading.Lock()
 
-    # ------------------------------------------------------------ lifecycle
+    # -------------------------------------------------------- accounts/themes
+
+    def _resolve_active(self):
+        account = accounts.get_account(self.settings.get("active_account_id"))
+        if account is None:
+            registry = accounts.all_accounts()
+            account = registry[0] if registry else None
+            if account:
+                self.settings["active_account_id"] = account["id"]
+                config.save_settings(self.settings)
+        return account
+
+    def _active_paths(self):
+        account = self._resolve_active()
+        if account is None:
+            return None, None
+        return account, accounts.account_paths(account)
 
     def getInitialState(self):
         self.settings = config.load_settings()
-        logger.info("frontend bootstrap: interface requested initial state")
+        registry = [accounts.public_account(a) for a in accounts.all_accounts()]
+        active = self._resolve_active()
+        logger.info("frontend bootstrap: %d account(s) configured", len(registry))
         return {
             "language": self.settings.get("language"),
-            "configured": bool(self.settings.get("configured")),
-            "username": self.settings.get("username", ""),
-            "settings": self.settings,
+            "theme": self.settings.get("theme") or "light",
+            "accounts": registry,
+            "active_account_id": active["id"] if active else None,
             "version": config.APP_VERSION,
         }
 
     def setLanguage(self, lang):
         if lang not in ("fa", "en"):
             return {"error": "invalid language"}
+        self.settings = config.load_settings()
         self.settings["language"] = lang
         config.save_settings(self.settings)
         return {"ok": True}
 
-    def getSettings(self):
+    def setTheme(self, theme):
+        if theme not in ("light", "dark"):
+            return {"error": "invalid theme"}
         self.settings = config.load_settings()
-        return self.settings
+        self.settings["theme"] = theme
+        config.save_settings(self.settings)
+        return {"ok": True}
 
-    def saveImapSettings(self, host, port, username, password):
+    def getAccounts(self):
+        return [accounts.public_account(a) for a in accounts.all_accounts()]
+
+    def addAccount(self, display_name, email, host, port):
         try:
             port = int(port)
         except (TypeError, ValueError):
             return {"error_key": "config.invalidPort"}
-        if not host or not username:
+        if not host or not email:
             return {"error_key": "config.fillAllFields"}
+        if not (1 <= port <= 65535):
+            return {"error_key": "config.invalidPort"}
+        try:
+            account = accounts.create_account(display_name, email, host, port)
+        except OSError as exc:
+            return {"error": str(exc)}
+        if not self.settings.get("active_account_id"):
+            self.settings["active_account_id"] = account["id"]
+            config.save_settings(self.settings)
+        return {"ok": True, "account": accounts.public_account(account)}
+
+    def updateAccount(self, account_id, display_name, email, host, port):
+        try:
+            port = int(port)
+        except (TypeError, ValueError):
+            return {"error_key": "config.invalidPort"}
+        if not host or not email:
+            return {"error_key": "config.fillAllFields"}
+        account = accounts.update_account(account_id, display_name=display_name,
+                                          email=email, imap_host=host,
+                                          imap_port=port)
+        if account is None:
+            return {"error_key": "accounts.notFound"}
+        return {"ok": True, "account": accounts.public_account(account)}
+
+    def removeAccount(self, account_id):
+        if self.sync_running() and self.sync_account_id == account_id:
+            return {"error_key": "accounts.removeWhileSyncing"}
+        removed = accounts.remove_account(account_id)
+        if not removed:
+            return {"error_key": "accounts.notFound"}
         self.settings = config.load_settings()
-        self.settings["imap_host"] = host
-        self.settings["imap_port"] = port
-        self.settings["username"] = username
-        self.settings["configured"] = True
-        config.save_settings(self.settings)
-        if password:
-            self._password = password
+        if self.settings.get("active_account_id") == account_id:
+            registry = accounts.all_accounts()
+            self.settings["active_account_id"] = registry[0]["id"] if registry else None
+            config.save_settings(self.settings)
         return {"ok": True}
+
+    def selectAccount(self, account_id):
+        if self.sync_running() and self.sync_account_id != account_id:
+            return {"error_key": "sync.switchWhileRunning"}
+        account = accounts.get_account(account_id)
+        if account is None:
+            return {"error_key": "accounts.notFound"}
+        self.settings = config.load_settings()
+        self.settings["active_account_id"] = account_id
+        config.save_settings(self.settings)
+        return {"ok": True, "account": accounts.public_account(account)}
 
     # ------------------------------------------------------------- syncing
 
     def sync_running(self):
         return bool(self.sync_thread and self.sync_thread.is_alive())
 
-    def startSync(self, password):
+    def startSync(self, account_id, password):
         if self.sync_running():
             return {"error_key": "sync.statusRunning"}
-        settings = config.load_settings()
-        host = settings.get("imap_host")
-        username = settings.get("username")
-        port = settings.get("imap_port") or 993
-        if not host or not username or not password:
+        account = accounts.get_account(account_id)
+        if account is None:
+            return {"error_key": "accounts.notFound"}
+        host = account.get("imap_host")
+        username = account.get("email")
+        port = account.get("imap_port") or 993
+        if not host or not account.get("email") or not password:
             return {"error_key": "config.fillAllFields"}
+        self.settings = config.load_settings()
+        self.settings["active_account_id"] = account_id
+        config.save_settings(self.settings)
+        self.sync_account_id = account_id
         self._password = password
         self.cancel_event = threading.Event()
         self.sync_state = imap_sync.SyncState()
         self.last_report = None
-        engine = imap_sync.SyncEngine(host, port, username, password,
-                                      self.sync_state, self.cancel_event)
+        # Mark running synchronously so the frontend cannot observe an idle
+        # snapshot in the gap between this call returning and the engine
+        # thread becoming visible.
+        with self.sync_state.lock:
+            self.sync_state.running = True
+            self.sync_state.status = "running"
+            self.sync_state.account_id = account_id
+            self.sync_state.account_email = account.get("email") or ""
+        paths = accounts.account_paths(account)
+        engine = imap_sync.SyncEngine(
+            host, port, account["email"], password, self.sync_state,
+            self.cancel_event, db_path=paths["db"], data_dir=paths["root"],
+            account_id=account_id, account_email=account.get("email") or "")
         self.sync_thread = threading.Thread(target=self._run_sync, args=(engine,),
                                             name="maildaan-sync", daemon=True)
         self.sync_thread.start()
@@ -125,10 +217,21 @@ class AppApi:
             self.last_report = {"status": "error", "errors": 1,
                                 "last_error": "internal error",
                                 "new_messages": 0, "deduped": 0,
-                                "elapsed": 0, "folders_processed": 0}
+                                "elapsed": 0, "folders_processed": 0,
+                                "account_id": self.sync_account_id}
         finally:
             self._password = ""
+            account_id = self.sync_account_id
+            self.sync_account_id = None
             report = self.last_report or {}
+            if account_id:
+                try:
+                    accounts.update_account(
+                        account_id,
+                        last_sync_at=dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        last_sync_status=report.get("status") or "error")
+                except Exception:
+                    pass
             try:
                 payload = json.dumps(report, ensure_ascii=False)
                 for window in webview.windows:
@@ -140,9 +243,12 @@ class AppApi:
 
     def getSyncProgress(self):
         if self.sync_state:
-            return self.sync_state.snapshot()
+            snapshot = self.sync_state.snapshot()
+            snapshot["sync_account_id"] = self.sync_account_id
+            return snapshot
         return {"running": False, "status": "idle", "total_pending": 0,
-                "total_processed": 0, "overall_percent": 0}
+                "total_processed": 0, "overall_percent": 0,
+                "connected": False, "sync_account_id": None}
 
     def cancelSync(self):
         if self.cancel_event:
@@ -164,44 +270,62 @@ class AppApi:
     # -------------------------------------------------------------- archive
 
     def getStats(self):
-        with storage.ArchiveDB() as db:
-            return db.archive_stats()
+        account, paths = self._active_paths()
+        if account is None:
+            return {"messages": 0, "total_size": 0, "contacts": 0,
+                    "attachments": 0, "organizations": 0, "folders": 0,
+                    "account_id": None}
+        with storage.ArchiveDB(paths["db"]) as db:
+            stats = db.archive_stats()
+        stats["account_id"] = account["id"]
+        return stats
 
     def listFolders(self):
-        with storage.ArchiveDB() as db:
+        account, paths = self._active_paths()
+        if account is None:
+            return []
+        with storage.ArchiveDB(paths["db"]) as db:
             return db.list_folders()
 
     def queryMessages(self, filters_json, sort="newest", page=1, page_size=50):
+        account, paths = self._active_paths()
+        if account is None:
+            return {"total": 0, "page": int(page or 1), "rows": []}
         filters = {}
         try:
             if filters_json:
                 filters = json.loads(filters_json)
         except ValueError:
             filters = {}
-        with storage.ArchiveDB() as db:
+        with storage.ArchiveDB(paths["db"]) as db:
             total = db.count_messages(filters)
             rows = db.query_messages(filters, sort, int(page or 1), int(page_size or 50))
             return {"total": total, "page": int(page or 1), "rows": rows}
 
     def getMessage(self, message_id):
-        with storage.ArchiveDB() as db:
+        account, paths = self._active_paths()
+        if account is None:
+            return None
+        with storage.ArchiveDB(paths["db"]) as db:
             msg = db.get_message(int(message_id))
             if not msg:
                 return None
-            data_dir = config.get_data_dir()
             msg["eml_exists"] = os.path.exists(
-                os.path.join(data_dir, msg.get("eml_relpath") or ""))
+                os.path.join(paths["root"], msg.get("eml_relpath") or ""))
             for att in msg["attachments"]:
                 att["exists"] = os.path.exists(
-                    os.path.join(data_dir, att.get("relpath") or ""))
+                    os.path.join(paths["root"], att.get("relpath") or ""))
             return msg
 
     def saveAttachment(self, message_id, attachment_id):
-        with storage.ArchiveDB() as db:
+        account, paths = self._active_paths()
+        if account is None:
+            return {"error_key": "common.saveFailed"}
+        with storage.ArchiveDB(paths["db"]) as db:
             att = db.message_attachment(int(message_id), int(attachment_id))
         if not att:
             return {"error_key": "common.saveFailed"}
-        src = os.path.join(config.get_data_dir(), att["relpath"])
+        src = os.path.join(paths["root"], att["relpath"])
         if not os.path.exists(src):
             return {"error_key": "common.saveFailed"}
         target = dialogs.save_dialog("MailDaan", att["filename_safe"] or att["filename"])
@@ -214,7 +338,10 @@ class AppApi:
         return {"path": target}
 
     def saveAllAttachments(self, message_id):
-        with storage.ArchiveDB() as db:
+        account, paths = self._active_paths()
+        if account is None:
+            return {"error_key": "common.saveFailed"}
+        with storage.ArchiveDB(paths["db"]) as db:
             msg = db.get_message(int(message_id))
             attachments = msg["attachments"] if msg else []
         if not attachments:
@@ -223,9 +350,8 @@ class AppApi:
         if not target_dir:
             return None
         saved = []
-        data_dir = config.get_data_dir()
         for att in attachments:
-            src = os.path.join(data_dir, att["relpath"])
+            src = os.path.join(paths["root"], att["relpath"])
             if not os.path.exists(src):
                 continue
             dest = os.path.join(target_dir, att["filename_safe"] or att["filename"])
@@ -244,11 +370,14 @@ class AppApi:
         return {"path": target_dir, "count": len(saved)}
 
     def saveEml(self, message_id):
-        with storage.ArchiveDB() as db:
+        account, paths = self._active_paths()
+        if account is None:
+            return {"error_key": "common.saveFailed"}
+        with storage.ArchiveDB(paths["db"]) as db:
             msg = db.get_message(int(message_id))
         if not msg:
             return {"error_key": "common.saveFailed"}
-        src = os.path.join(config.get_data_dir(), msg["eml_relpath"] or "")
+        src = os.path.join(paths["root"], msg["eml_relpath"] or "")
         if not os.path.exists(src):
             return {"error_key": "common.saveFailed"}
         from storage import safe_filename
@@ -265,6 +394,9 @@ class AppApi:
     # --------------------------------------------------------------- export
 
     def exportExcel(self, filters_json, sort="newest"):
+        account, paths = self._active_paths()
+        if account is None:
+            return {"error_key": "export.failed"}
         filters = {}
         try:
             if filters_json:
@@ -277,10 +409,10 @@ class AppApi:
         if not target:
             return None
         try:
-            with storage.ArchiveDB() as db:
+            with storage.ArchiveDB(paths["db"]) as db:
                 summary = export.generate_workbook(db, filters, sort,
-                                                   self.settings.get("language") or "en",
-                                                   target)
+                                                    self.settings.get("language") or "en",
+                                                    target)
         except Exception as exc:
             logger.error("excel export failed\n%s", traceback.format_exc())
             return {"error": str(exc)}

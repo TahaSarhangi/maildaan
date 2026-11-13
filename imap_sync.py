@@ -167,6 +167,9 @@ class SyncState:
         self.start_time = 0.0
         self.last_error = ""
         self.error_folders = []
+        self.connected = False
+        self.account_id = ""
+        self.account_email = ""
 
     def snapshot(self) -> dict:
         with self.lock:
@@ -200,6 +203,9 @@ class SyncState:
                 "folder_percent": round(folder_pct, 1),
                 "folder_eta_seconds": round(folder_eta),
                 "elapsed_seconds": round(elapsed),
+                "connected": self.connected,
+                "account_id": self.account_id,
+                "account_email": self.account_email,
                 "last_error": self.last_error,
                 "error_folders": list(self.error_folders),
             }
@@ -207,7 +213,9 @@ class SyncState:
 
 class SyncEngine:
     def __init__(self, host: str, port: int, username: str, password: str,
-                 state: SyncState, cancel_event: threading.Event):
+                 state: SyncState, cancel_event: threading.Event,
+                 db_path: str = None, data_dir: str = None,
+                 account_id: str = "", account_email: str = ""):
         self.host = host
         self.port = int(port)
         self.username = username
@@ -215,6 +223,11 @@ class SyncEngine:
         self.state = state
         self.cancel = cancel_event
         self.db = None
+        self.db_path = db_path
+        self.data_dir = data_dir
+        with state.lock:
+            state.account_id = account_id
+            state.account_email = account_email
 
     # ------------------------------------------------------------------ utils
 
@@ -260,13 +273,20 @@ class SyncEngine:
     # ------------------------------------------------------------------- main
 
     def run(self) -> dict:
-        self.db = storage.ArchiveDB()
+        self.db = storage.ArchiveDB(self.db_path) if self.db_path \
+            else storage.ArchiveDB()
         log_id = self.db.start_sync_log()
+        with self.state.lock:
+            self.state.running = True
+            self.state.status = "running"
+            self.state.phase = "connecting"
         started = time.time()
         new_total, dedup_total, err_total = 0, 0, 0
         status = "completed"
         try:
             client = self._connect()
+            with self.state.lock:
+                self.state.connected = True
         except Exception as exc:
             LOG.error("IMAP connection failed: %s", exc)
             self.db.finish_sync_log(log_id, "error", 0, 0, 1, time.time() - started)
@@ -277,7 +297,9 @@ class SyncEngine:
                 self.state.running = False
             return {"status": "error", "error": str(exc), "new_messages": 0,
                     "deduped": 0, "errors": 1, "folders_processed": 0,
-                    "elapsed": time.time() - started}
+                    "elapsed": time.time() - started,
+                    "account_id": self.state.account_id,
+                    "account_email": self.state.account_email}
 
         try:
             folders = self._discover_folders(client)
@@ -369,6 +391,8 @@ class SyncEngine:
 
         return {
             "status": status,
+            "account_id": self.state.account_id,
+            "account_email": self.state.account_email,
             "folders_processed": len(plan) if 'plan' in locals() else 0,
             "new_messages": new_total,
             "deduped": dedup_total,
@@ -452,7 +476,7 @@ class SyncEngine:
         return new_count, dedup_count, err_count
 
     def _write_files(self, raw: bytes, parsed: dict) -> None:
-        data_dir = config.get_data_dir()
+        data_dir = self.data_dir or config.get_data_dir()
         eml_path = os.path.join(data_dir, parsed["eml_relpath"])
         os.makedirs(os.path.dirname(eml_path), exist_ok=True)
         if not os.path.exists(eml_path):

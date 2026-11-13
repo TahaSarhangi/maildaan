@@ -134,7 +134,7 @@ class ArchiveDB:
     """Thin SQLite wrapper. One instance per thread."""
 
     def __init__(self, path: str = None):
-        self.path = path or config.get_db_path()
+        self.path = path or config.get_legacy_db_path()
         self._lock = threading.Lock()
         self.conn = sqlite3.connect(self.path, check_same_thread=False, timeout=30.0)
         self.conn.row_factory = sqlite3.Row

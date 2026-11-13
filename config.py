@@ -9,7 +9,7 @@ import os
 import sys
 
 APP_NAME = "MailDaan"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 DEVELOPER = "Titanium"
 DEVELOPER_URL = "https://github.com/TahaSarhangi"
 COPYRIGHT = "© 2026 MailDaan"
@@ -20,37 +20,25 @@ def get_base_dir() -> str:
     local = os.environ.get("LOCALAPPDATA")
     if not local:
         local = os.path.expanduser("~\\AppData\\Local")
-    base = os.path.join(local, "MailDaan")
-    return base
+    return os.path.join(local, "MailDaan")
 
 
-def get_data_dir() -> str:
-    """Return the user data directory, creating it when needed."""
-    path = os.path.join(get_base_dir(), "data")
-    os.makedirs(path, exist_ok=True)
-    return path
+def get_legacy_data_dir() -> str:
+    """Directory used by MailDaan 1.0 single-account archives (kept intact)."""
+    return os.path.join(get_base_dir(), "data")
 
 
-def get_db_path() -> str:
-    return os.path.join(get_data_dir(), "maildaan.db")
+def get_legacy_db_path() -> str:
+    return os.path.join(get_legacy_data_dir(), "maildaan.db")
 
 
-def get_eml_dir() -> str:
-    path = os.path.join(get_data_dir(), "eml")
-    os.makedirs(path, exist_ok=True)
-    return path
+def get_accounts_root() -> str:
+    """Root directory holding one folder per registered email account."""
+    return os.path.join(get_base_dir(), "accounts")
 
 
-def get_attachments_dir() -> str:
-    path = os.path.join(get_data_dir(), "attachments")
-    os.makedirs(path, exist_ok=True)
-    return path
-
-
-def get_exports_dir() -> str:
-    path = os.path.join(get_data_dir(), "exports")
-    os.makedirs(path, exist_ok=True)
-    return path
+def get_account_dir(account_id: str) -> str:
+    return os.path.join(get_accounts_root(), account_id)
 
 
 def get_log_dir() -> str:
@@ -61,30 +49,44 @@ def get_log_dir() -> str:
 
 
 def get_settings_path() -> str:
-    return os.path.join(get_data_dir(), "settings.json")
+    """Application-wide settings (language, theme, active account)."""
+    return os.path.join(get_base_dir(), "app_settings.json")
+
+
+def get_registry_path() -> str:
+    """Account registry: a list of account metadata records (no passwords)."""
+    return os.path.join(get_base_dir(), "accounts.json")
 
 
 DEFAULT_SETTINGS = {
-    "language": None,          # 'fa' | 'en' | None (first run)
-    "imap_host": "",
-    "imap_port": 993,
-    "username": "",
-    "configured": False,       # set True once IMAP settings accepted
-    "first_run_complete": False,
+    "language": None,        # 'fa' | 'en' | None (first run)
+    "theme": "light",        # 'light' | 'dark'
+    "active_account_id": None,
 }
 
 
+def _load_json(path):
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
+
+
 def load_settings() -> dict:
-    path = get_settings_path()
+    """Load application settings, adopting the 1.0 settings file once."""
     settings = dict(DEFAULT_SETTINGS)
-    if os.path.exists(path):
-        try:
-            with open(path, "r", encoding="utf-8") as fh:
-                saved = json.load(fh)
-            if isinstance(saved, dict):
-                settings.update(saved)
-        except (OSError, ValueError):
-            pass
+    saved = _load_json(get_settings_path())
+    if isinstance(saved, dict):
+        settings.update(saved)
+        return settings
+    legacy = _load_json(os.path.join(get_legacy_data_dir(), "settings.json"))
+    if isinstance(legacy, dict) and legacy.get("language") in ("fa", "en"):
+        settings["language"] = legacy["language"]
+        if legacy.get("theme") in ("light", "dark"):
+            settings["theme"] = legacy["theme"]
     return settings
 
 
@@ -111,4 +113,3 @@ def get_ui_dir() -> str:
 
 def get_asset_dir() -> str:
     return os.path.join(_packaged_base(), "assets")
-
