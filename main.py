@@ -26,12 +26,15 @@ logger = logging.getLogger("maildaan")
 
 def setup_logging():
     try:
-        log_path = os.path.join(config.get_data_dir(), "maildaan.log")
+        os.makedirs(config.get_log_dir(), exist_ok=True)
+        log_path = os.path.join(config.get_log_dir(), "maildaan.log")
         logging.basicConfig(
             level=logging.INFO,
             format="%(asctime)s %(levelname)s %(name)s: %(message)s",
             handlers=[logging.FileHandler(log_path, encoding="utf-8")],
         )
+        logging.getLogger("webview").addHandler(
+            logging.FileHandler(log_path, encoding="utf-8"))
     except OSError:
         logging.basicConfig(level=logging.CRITICAL)
 
@@ -52,6 +55,7 @@ class AppApi:
 
     def getInitialState(self):
         self.settings = config.load_settings()
+        logger.info("frontend bootstrap: interface requested initial state")
         return {
             "language": self.settings.get("language"),
             "configured": bool(self.settings.get("configured")),
@@ -296,6 +300,23 @@ class AppApi:
         return {"ok": True}
 
 
+def log_startup_exception(exc):
+    """Write a startup failure traceback to %LOCALAPPDATA%\\MailDaan\\logs.
+
+    The packaged executable has no console and pywebview discards stderr,
+    so otherwise these errors would be invisible. No user data is logged.
+    """
+    try:
+        os.makedirs(config.get_log_dir(), exist_ok=True)
+        path = os.path.join(config.get_log_dir(), "startup.log")
+        with open(path, "a", encoding="utf-8") as fh:
+            stamp = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            fh.write(f"\n=== {stamp} startup failure ===\n")
+            traceback.print_exc(file=fh)
+    except OSError:
+        pass
+
+
 def show_webview2_error(lang):
     """Last-resort dialog when the WebView2 runtime is unavailable."""
     try:
@@ -325,11 +346,20 @@ def main():
     if not os.path.exists(icon_path):
         icon_path = None
 
+    # Point at the entry HTML file itself: a directory URL resolves to the
+    # server root "/", which pywebview's static route cannot serve
+    # (asset() requires a file argument and fails with HTTP 500).
+    index_path = os.path.join(config.get_ui_dir(), "index.html")
+    if not os.path.exists(index_path):
+        log_startup_exception(FileNotFoundError(index_path))
+        show_webview2_error(settings.get("language"))
+        sys.exit(1)
+
     api = AppApi()
     try:
         window = webview.create_window(
             "MailDaan",
-            url=config.get_ui_dir(),
+            url=index_path,
             js_api=api,
             width=1280,
             height=840,
@@ -351,7 +381,7 @@ def main():
 
         webview.start(debug=False, http_server=True, icon=icon_path)
     except Exception:
-        logger.error("failed to start window\n%s", traceback.format_exc())
+        log_startup_exception(sys.exc_info()[1])
         show_webview2_error(settings.get("language"))
         sys.exit(1)
 

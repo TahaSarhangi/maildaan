@@ -53,6 +53,13 @@ def get_exports_dir() -> str:
     return path
 
 
+def get_log_dir() -> str:
+    """Return the directory for runtime diagnostic logs (no user content)."""
+    path = os.path.join(get_base_dir(), "logs")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
 def get_settings_path() -> str:
     return os.path.join(get_data_dir(), "settings.json")
 
