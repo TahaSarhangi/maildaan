@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- MailDaan icon: an envelope archiving into a storage tray -->
+  <rect x="20" y="36" width="216" height="140" rx="22" fill="#1F4E79"/>
+  <polyline points="20,52 128,140 236,52" fill="none" stroke="#F2C94C"
+            stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="44" y="192" width="168" height="52" rx="14" fill="#2E6DA4"/>
+  <rect x="102" y="206" width="52" height="12" rx="6" fill="#F2C94C"/>
+</svg>
