@@ -5,12 +5,14 @@
 It connects to an IMAP account once, downloads every accessible message and attachment into a local archive (SQLite + original `.eml` files), and then lets you browse, search, filter and export your email — completely offline.
 
 - Developer: **Titanium** — https://github.com/TahaSarhangi
-- Version: 1.0.0
+- Version: 1.1.0
 - License: MIT
 
 ## Features
 
 - **Complete IMAP archiving** — discovers every selectable folder (Inbox, Sent, Drafts, Spam, custom and nested folders), downloads full message content, attachments, and original `.eml` files.
+- **Multiple email accounts** — archive several IMAP accounts side by side. Each account keeps its own independent archive (separate SQLite database, `.eml` files, attachments, folders and sync checkpoints), and switching accounts from the sidebar instantly loads that account's data.
+- **Professional desktop interface** — persistent navigation sidebar, compact top toolbar, three-pane archive explorer (folders / message list / message detail), light and dark themes with sun/moon switching that persists between launches, and a consistent bundled SVG icon set.
 - **Offline browsing** — read messages, view and save attachments, no internet connection required after the first sync.
 - **Incremental sync with recovery** — uses IMAP UID + UIDVALIDITY checkpoints. An interrupted sync resumes where it stopped; a failed batch never advances the checkpoint.
 - **Bilingual interface** — Persian (RTL, Vazirmatn font) and English (LTR), switchable at any time. First launch asks for your language.
@@ -76,11 +78,18 @@ python -m pip install -r requirements-build.txt
 build.bat
 ```
 
-This produces `dist\MailDaan\MailDaan.exe` (one-folder distribution) and `dist\MailDaan-1.0.0.zip` for GitHub Releases.
+This produces `dist\MailDaan\MailDaan.exe` (one-folder distribution) and `dist\MailDaan-1.1.0.zip` for GitHub Releases.
 
 ## Data location
 
-All user data is stored in `%LOCALAPPDATA%\MailDaan\` (SQLite database, `.eml` files, attachments, settings and exports), completely separate from the application.
+All user data is stored in `%LOCALAPPDATA%\MailDaan\` — completely separate from the application:
+
+- `app_settings.json` — language, theme, active account
+- `accounts.json` — account registry (no passwords are ever stored)
+- `accounts\<id>\` — per-account independent archives (`archive.db`, `eml\`, `attachments\`)
+- `data\` — a MailDaan 1.0 single-account archive is adopted in place and kept untouched
+
+Upgrading from 1.0 is automatic: the existing archive is registered as the first account and continues to work without re-downloading anything.
 
 ## License
 
