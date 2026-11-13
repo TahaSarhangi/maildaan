@@ -152,21 +152,44 @@ def safe_filename(name: str, fallback: str = "file") -> str:
     return name[:180] or fallback
 
 
+# ArchiveDB setup (schema, migration, index build) is serialized per database
+# file: the frontend can open the same archive concurrently from parallel
+# bridge calls, and SQLite refuses a journal-mode change while another
+# connection is setting the database up for the first time.
+_setup_locks_guard = threading.Lock()
+_setup_locks = {}
+
+
+def _setup_lock_for(path: str) -> threading.Lock:
+    with _setup_locks_guard:
+        lock = _setup_locks.get(path)
+        if lock is None:
+            lock = threading.Lock()
+            _setup_locks[path] = lock
+        return lock
+
+
 class ArchiveDB:
     """Thin SQLite wrapper. One instance per thread."""
 
     def __init__(self, path: str = None):
         self.path = path or config.get_legacy_db_path()
         self._lock = threading.Lock()
-        self.conn = sqlite3.connect(self.path, check_same_thread=False, timeout=30.0)
-        self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA journal_mode=WAL")
-        self.conn.execute("PRAGMA synchronous=NORMAL")
-        self.conn.execute("PRAGMA foreign_keys=ON")
-        with self._lock:
-            self.conn.executescript(SCHEMA)
-            self.conn.commit()
-        self._fts_ok = self._setup_search_index()
+        setup_lock = _setup_lock_for(self.path)
+        with setup_lock:
+            self.conn = sqlite3.connect(self.path, check_same_thread=False,
+                                        timeout=30.0)
+            self.conn.row_factory = sqlite3.Row
+            try:
+                self.conn.execute("PRAGMA journal_mode=WAL")
+            except sqlite3.OperationalError:
+                pass  # already in WAL mode, or another connection owns it
+            self.conn.execute("PRAGMA synchronous=NORMAL")
+            self.conn.execute("PRAGMA foreign_keys=ON")
+            with self._lock:
+                self.conn.executescript(SCHEMA)
+                self.conn.commit()
+            self._fts_ok = self._setup_search_index()
 
     def _setup_search_index(self) -> bool:
         """Additive 1.1.1 search migration: search_all column + FTS5 index.
