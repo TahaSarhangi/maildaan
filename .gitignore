@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Build artifacts
+build/
+dist/
+*.spec.bak
+
+# User data — NEVER commit (stored in %LOCALAPPDATA%\MailDaan)
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.eml
+exports/
+attachments/
+eml/
+data/
+
+# Logs and temp
+*.log
+tmp/
+temp/
+
+# OS / editor
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
