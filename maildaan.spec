@@ -6,7 +6,7 @@ binaries = []
 hiddenimports = []
 tmp_ret = collect_all('webview')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-hiddenimports += ['imapclient', 'openpyxl']
+hiddenimports += ['imapclient', 'openpyxl', 'argon2', 'rapidfuzz']
 
 
 a = Analysis(

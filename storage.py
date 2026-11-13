@@ -9,6 +9,7 @@ import time
 import datetime as _dt
 
 import config
+import search
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS folders (
@@ -32,6 +33,7 @@ CREATE TABLE IF NOT EXISTS messages (
     plain_body TEXT,
     html_body TEXT,
     search_norm TEXT,
+    search_all TEXT,
     size INTEGER,
     eml_relpath TEXT,
     created_at TEXT
@@ -96,6 +98,26 @@ CREATE INDEX IF NOT EXISTS idx_attachments_msg ON attachments(message_id);
 CREATE INDEX IF NOT EXISTS idx_contacts_domain ON contacts(domain);
 """
 
+# FTS5 full-text index over the normalized search representation of every
+# message (additive: existing 1.0/1.1.0 archives are migrated in place).
+# search_fts stores its own content, so triggers keep it in sync with plain
+# rowid deletes (the special 'delete' INSERT form only applies to
+# contentless/external-content tables and would raise "SQL logic error").
+FTS_SQL = """
+CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
+    norm, tokenize='unicode61 remove_diacritics 2');
+CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON messages BEGIN
+    INSERT INTO search_fts(rowid, norm) VALUES (new.id, new.search_all);
+END;
+CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON messages BEGIN
+    DELETE FROM search_fts WHERE rowid = old.id;
+END;
+CREATE TRIGGER IF NOT EXISTS messages_fts_au AFTER UPDATE ON messages BEGIN
+    DELETE FROM search_fts WHERE rowid = old.id;
+    INSERT INTO search_fts(rowid, norm) VALUES (new.id, new.search_all);
+END;
+"""
+
 _PERSIAN_MAP = str.maketrans({
     "ي": "ی", "ى": "ی", "ك": "ک",
     "أ": "ا", "إ": "ا", "ؤ": "و", "ئ": "ی",
@@ -143,6 +165,79 @@ class ArchiveDB:
         self.conn.execute("PRAGMA foreign_keys=ON")
         with self._lock:
             self.conn.executescript(SCHEMA)
+            self.conn.commit()
+        self._fts_ok = self._setup_search_index()
+
+    def _setup_search_index(self) -> bool:
+        """Additive 1.1.1 search migration: search_all column + FTS5 index.
+
+        Existing archives are upgraded in place; rows missing the normalized
+        search text are backfilled in batches and the FTS index is
+        synchronized once. Never deletes or rewrites user message data.
+        """
+        with self._lock:
+            try:
+                cols = {row["name"] for row in
+                        self.conn.execute("PRAGMA table_info(messages)")}
+                if "search_all" not in cols:
+                    self.conn.execute(
+                        "ALTER TABLE messages ADD COLUMN search_all TEXT")
+                fts_ok = True
+                try:
+                    self.conn.executescript(FTS_SQL)
+                except sqlite3.OperationalError:
+                    fts_ok = False  # SQLite build without FTS5: LIKE still works
+                self.conn.commit()
+                if fts_ok:
+                    (missing,) = self.conn.execute(
+                        "SELECT COUNT(*) FROM messages WHERE search_all IS NULL"
+                    ).fetchone()
+                    if missing:
+                        self._backfill_search_all()
+                    (n_msgs,) = self.conn.execute(
+                        "SELECT COUNT(*) FROM messages").fetchone()
+                    (n_fts,) = self.conn.execute(
+                        "SELECT COUNT(*) FROM search_fts").fetchone()
+                    if n_fts != n_msgs:
+                        self.conn.execute("DELETE FROM search_fts")
+                        self.conn.execute(
+                            "INSERT INTO search_fts(rowid, norm) "
+                            "SELECT id, search_all FROM messages "
+                            "WHERE search_all IS NOT NULL")
+                    self.conn.commit()
+                return fts_ok
+            except sqlite3.OperationalError:
+                return False
+
+    def _backfill_search_all(self) -> None:
+        """Recompute the normalized search text for pre-1.1.1 rows."""
+        while True:
+            rows = self.conn.execute(
+                "SELECT id, sender_name, sender_email, subject, plain_body "
+                "FROM messages WHERE search_all IS NULL ORDER BY id LIMIT 500"
+            ).fetchall()
+            if not rows:
+                break
+            ids = [row["id"] for row in rows]
+            placeholders = ",".join("?" * len(ids))
+            recs = self.conn.execute(
+                f"SELECT message_id, name, email FROM recipients "
+                f"WHERE message_id IN ({placeholders})", ids).fetchall()
+            by_msg = {}
+            for rec in recs:
+                by_msg.setdefault(rec["message_id"], []).append(
+                    {"name": rec["name"], "email": rec["email"]})
+            for row in rows:
+                text = search.message_search_text({
+                    "sender_name": row["sender_name"],
+                    "sender_email": row["sender_email"],
+                    "subject": row["subject"],
+                    "plain_body": row["plain_body"],
+                    "recipients": by_msg.get(row["id"], []),
+                })
+                self.conn.execute(
+                    "UPDATE messages SET search_all=? WHERE id=?",
+                    (text, row["id"]))
             self.conn.commit()
 
     def close(self) -> None:
@@ -237,15 +332,17 @@ class ArchiveDB:
             search_norm = msg.get("search_norm") or normalize_text(" \n ".join(
                 str(msg.get(k) or "") for k in
                 ("sender_name", "sender_email", "subject", "plain_body")))
+            search_all = msg.get("search_all") or search.message_search_text(msg)
             cur = self.conn.execute(
                 """INSERT INTO messages
                    (content_hash, message_id, date_utc, date_ts, sender_name, sender_email,
-                    subject, plain_body, html_body, search_norm, size, eml_relpath, created_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    subject, plain_body, html_body, search_norm, search_all, size,
+                    eml_relpath, created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (msg["content_hash"], msg["message_id"], msg["date_utc"], msg["date_ts"],
-                 msg["sender_name"], msg["sender_email"], msg["subject"],
-                 msg["plain_body"], msg["html_body"], search_norm, msg["size"],
-                 msg["eml_relpath"], utc_now_iso()))
+                 msg["sender_name"], msg["sender_email"],
+                 msg["subject"], msg["plain_body"], msg["html_body"], search_norm,
+                 search_all, msg["size"], msg["eml_relpath"], utc_now_iso()))
             message_id = cur.lastrowid
             self.conn.execute(
                 "INSERT OR IGNORE INTO message_folders (message_id, folder_id, uid) VALUES (?,?,?)",
@@ -335,7 +432,7 @@ class ArchiveDB:
                    FROM folders f ORDER BY f.imap_name COLLATE NOCASE""").fetchall()
             return [dict(r) for r in rows]
 
-    def _build_where(self, filters: dict):
+    def _build_where(self, filters: dict, search_fragment=None):
         clauses, params = [], []
         if filters.get("folder_id"):
             clauses.append("m.id IN (SELECT message_id FROM message_folders WHERE folder_id=?)")
@@ -353,7 +450,10 @@ class ArchiveDB:
                 "(r.email LIKE ? OR r.name LIKE ?)))")
             like = f"%{filters['party'].replace('%', '\\%')}%"
             params.extend([like, like, like, like])
-        if filters.get("search"):
+        if search_fragment is not None:
+            clauses.append(search_fragment["sql"])
+            params.extend(search_fragment["params"])
+        elif filters.get("search"):
             norm = normalize_text(filters["search"])
             like = f"%{norm.replace('%', '\\%')}%"
             clauses.append("m.search_norm LIKE ? ESCAPE '\\'")
@@ -361,12 +461,57 @@ class ArchiveDB:
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         return where, params
 
+    def _search_fragment(self, raw_query: str, suggest: bool = True):
+        """Resolve a user search query through the layered search plan."""
+        if not raw_query or not raw_query.strip():
+            return None, None
+        backend = search.SearchBackend(self.conn, self._fts_ok)
+        result = search.plan(backend, raw_query, suggest=suggest)
+        return result["fragment"], result["suggestion"]
+
     def count_messages(self, filters: dict) -> int:
         where, params = self._build_where(filters)
         with self._lock:
             row = self.conn.execute(
                 f"SELECT COUNT(*) AS n FROM messages m {where}", params).fetchone()
             return row["n"] if row else 0
+
+    def search_query(self, filters: dict, sort: str = "newest", page: int = 1,
+                     page_size: int = 50):
+        """Layered message search: count + page + suggestion in one round."""
+        suggestion = None
+        fragment = None
+        raw = filters.get("search") if isinstance(filters, dict) else None
+        if raw and str(raw).strip():
+            fragment, suggestion = self._search_fragment(str(raw))
+        where, params = self._build_where(filters, fragment)
+        sort_map = {
+            "newest": "m.date_ts DESC NULLS LAST, m.id DESC",
+            "oldest": "m.date_ts ASC NULLS LAST, m.id ASC",
+            "sender": "m.sender_name ASC NULLS LAST, m.date_ts DESC",
+            "subject": "m.subject ASC NULLS LAST, m.date_ts DESC",
+        }
+        order = sort_map.get(sort, sort_map["newest"])
+        offset = max(0, (page - 1) * page_size)
+        with self._lock:
+            row = self.conn.execute(
+                f"SELECT COUNT(*) AS n FROM messages m {where}", params).fetchone()
+            total = row["n"] if row else 0
+            sql = f"""SELECT m.id, m.message_id, m.date_utc, m.date_ts, m.sender_name,
+                             m.sender_email, m.subject, m.plain_body, m.size,
+                             (SELECT COUNT(*) FROM attachments a WHERE a.message_id=m.id) AS att_count,
+                             (SELECT GROUP_CONCAT(f.display_name, ', ') FROM message_folders mf
+                              JOIN folders f ON f.id=mf.folder_id WHERE mf.message_id=m.id) AS folders
+                      FROM messages m {where} ORDER BY {order} LIMIT ? OFFSET ?"""
+            rows = self.conn.execute(sql, params + [page_size, offset]).fetchall()
+            results = []
+            for r in rows:
+                d = dict(r)
+                if d.get("plain_body"):
+                    d["preview"] = d["plain_body"][:160]
+                results.append(d)
+        return {"total": total, "page": int(page or 1), "rows": results,
+                "suggestion": suggestion}
 
     def query_messages(self, filters: dict, sort: str = "newest", page: int = 1,
                        page_size: int = 50):
@@ -455,7 +600,13 @@ class ArchiveDB:
     # ------------------------------------------------------------- export api
 
     def export_messages(self, filters: dict, sort: str = "newest", limit: int = 20000):
-        where, params = self._build_where(filters)
+        fragment = None
+        raw = filters.get("search") if isinstance(filters, dict) else None
+        if raw and str(raw).strip():
+            # Same direct search layers as the archive view so the exported
+            # scope matches what the user searched for (no fuzzy guessing).
+            fragment, _ = self._search_fragment(str(raw), suggest=False)
+        where, params = self._build_where(filters, fragment)
         sort_map = {"newest": "m.date_ts DESC", "oldest": "m.date_ts ASC",
                     "sender": "m.sender_name ASC", "subject": "m.subject ASC"}
         order = sort_map.get(sort, sort_map["newest"])
