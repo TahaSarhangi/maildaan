@@ -4,68 +4,98 @@
   "developedBy": "Developed by",
   "developer": "Titanium",
 
-  "chooseLanguage": "Choose your language",
-  "persian": "فارسی",
-  "english": "English",
-  "continue": "Continue",
+  "firstRun": {
+    "choose": "Choose your language",
+    "tagline": "Offline email archive for Windows"
+  },
 
   "nav": {
     "archive": "Archive",
     "settings": "Settings",
     "syncEmails": "Sync Emails",
-    "exportExcel": "Export to Excel"
+    "exportExcel": "Export to Excel",
+    "exit": "Exit Application"
   },
   "languageSwitchTitle": "Language",
 
+  "theme": {
+    "light": "Light",
+    "dark": "Dark"
+  },
+
+  "accounts": {
+    "title": "Email Accounts",
+    "add": "Add Account",
+    "firstTitle": "Add Your Email Account",
+    "create": "Add Account",
+    "createAndSync": "Add Account and Start Sync",
+    "subtitle": "Enter the IMAP details for this email account.",
+    "display": "Display name (optional)",
+    "account": "Account",
+    "remove": "Remove Account",
+    "removeConfirm": "Remove {account} from MailDaan? The local archive on disk is kept and can be read again later.",
+    "none": "No email account",
+    "notFound": "Account not found.",
+    "removeWhileSyncing": "This account is being synchronized. Cancel the synchronization first.",
+    "running": "Syncing"
+  },
+
   "config": {
-    "title": "Email Account",
-    "subtitle": "Configure your IMAP account to start archiving.",
     "imapServer": "IMAP Server",
     "imapPort": "IMAP Port",
     "username": "Email Address / Username",
     "password": "Password",
-    "startSync": "Start Synchronization",
     "fillAllFields": "Please fill in all fields.",
     "invalidPort": "Port must be a number between 1 and 65535.",
-    "connecting": "Connecting and calculating workload…",
     "requirements": "Your password is used only for this synchronization and is never stored."
   },
 
   "settings": {
-    "title": "Settings",
+    "appTitle": "Application Settings",
+    "accountTitle": "Email Account Settings",
     "language": "Interface Language",
-    "imapServer": "IMAP Server",
-    "imapPort": "IMAP Port",
-    "username": "Email Address / Username",
-    "save": "Save Settings",
+    "theme": "Theme",
+    "save": "Save",
     "saved": "Settings saved.",
     "note": "The password is never stored. You will be asked for it when syncing."
   },
 
   "sync": {
     "title": "Synchronization",
+    "start": "Start Synchronization",
+    "backToArchive": "Back to Archive",
+    "ready": "Ready",
+    "idleBody": "Synchronization downloads every message from all IMAP folders into the local archive. When interrupted, it resumes from the last checkpoint.",
+    "connection": "Connection",
+    "connected": "Connected",
+    "disconnected": "Not connected",
+    "errors": "Errors",
     "totalPending": "Pending messages",
     "processed": "Processed",
     "speed": "Speed",
     "eta": "Estimated remaining",
+    "elapsed": "Elapsed",
     "foldersProgress": "Folders",
     "currentFolder": "Current folder",
-    "folderPending": "Pending in folder",
+    "overall": "Overall progress",
     "cancel": "Cancel",
+    "cancelConfirm": "Cancel synchronization? Downloaded messages will be kept and the next sync will resume.",
+    "cancelling": "Cancelling the synchronization… You will switch accounts when it is safe.",
     "preparing": "Discovering folders and counting messages…",
-    "running": "Running",
+    "switchBlocked": "Synchronization running",
+    "switchBlockedBody": "A synchronization is running for {account}. Switching now is unsafe.",
+    "cancelAndSwitch": "Cancel Sync & Switch",
+    "stayHere": "Stay",
     "statusRunning": "Running",
     "statusCompleted": "Completed",
     "statusIncomplete": "Completed with errors",
     "statusCancelled": "Cancelled",
     "statusError": "Failed",
-    "cancelConfirm": "Cancel synchronization? Downloaded messages will be kept and the next sync will resume.",
     "syncActiveExit": "Synchronization is still running. Exit anyway? Progress will be saved and the next sync resumes from the checkpoint."
   },
 
   "report": {
     "title": "Synchronization Report",
-    "status": "Status",
     "foldersProcessed": "Folders processed",
     "newMessages": "New messages downloaded",
     "deduped": "Already archived (deduplicated)",
@@ -81,6 +111,7 @@
   },
 
   "folders": {
+    "title": "Folders",
     "allEmails": "All Emails",
     "messages": "messages",
     "map": {
@@ -101,13 +132,6 @@
   },
 
   "list": {
-    "from": "From",
-    "to": "To",
-    "subject": "Subject",
-    "date": "Date",
-    "attachments": "Attachments",
-    "noResults": "No messages match your search or filters.",
-    "emptyArchive": "Your archive is empty. Sync your emails to get started.",
     "page": "Page",
     "of": "of",
     "prev": "Previous",
@@ -122,8 +146,7 @@
     "dateTo": "Date to",
     "party": "Sender or recipient",
     "apply": "Apply",
-    "reset": "Reset Filters",
-    "sort": "Sort",
+    "reset": "Reset",
     "newest": "Newest first",
     "oldest": "Oldest first",
     "sender": "Sender",
@@ -137,33 +160,41 @@
     "cc": "CC",
     "bcc": "BCC",
     "date": "Date",
-    "subject": "Subject",
     "attachments": "Attachments",
     "saveAttachment": "Save",
     "saveAllAttachments": "Save All",
-    "originalEml": "Original EML",
     "saveEml": "Save original message (.eml)",
     "noSubject": "(No subject)",
+    "notFound": "Message not found.",
     "htmlNotice": "This message has no plain-text part. Displayed from original HTML with scripts and remote content disabled.",
     "folders": "Folders"
   },
 
+  "empty": {
+    "selectMessage": "Select a message to read it",
+    "noAccountsTitle": "No email accounts configured",
+    "noAccountsBody": "Add an IMAP account to start building your offline archive.",
+    "notSyncedTitle": "This account has not been synchronized yet",
+    "notSyncedBody": "Run a synchronization to download messages from the IMAP server into this archive.",
+    "syncCTA": "Sync Now",
+    "noResultsTitle": "No messages found",
+    "noResultsBody": "No messages match your search or filters.",
+    "emptyFolderTitle": "This folder is empty",
+    "emptyFolderBody": "The selected folder does not contain any archived messages."
+  },
+
   "export": {
-    "title": "Export to Excel",
-    "inProgress": "Generating Excel workbook…",
     "done": "Excel report created.",
     "failed": "Excel export failed.",
-    "saveTitle": "Save MailDaan report",
-    "defaultName": "maildaan-report",
-    "filterName": "Excel Workbook",
-    "messages": "messages,",
-    "contacts": "contacts,",
+    "messages": "messages •",
+    "contacts": "contacts •",
     "organizations": "organizations"
   },
 
   "common": {
     "close": "Close",
     "ok": "OK",
+    "error": "Error",
     "cancel": "Cancel",
     "yes": "Yes",
     "no": "No",

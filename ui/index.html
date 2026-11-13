@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" dir="ltr">
+<html lang="en" dir="ltr" data-theme="light">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,157 +7,282 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <!-- Locally bundled Lucide-style icon sprite (stroke icons, currentColor). -->
+  <svg class="icon-sprite" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="i-logo" viewBox="0 0 24 24"><path d="M2.5 7.5 12 13l9.5-5.5"/><rect x="2" y="4" width="20" height="16" rx="2.5"/><path d="M2.5 7.5V19a2 2 0 0 0 2 2h3l4-4"/></symbol>
+    <symbol id="i-mail" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></symbol>
+    <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M10 11v6M14 11v6"/></symbol>
+    <symbol id="i-spam" viewBox="0 0 24 24"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></symbol>
+    <symbol id="i-star" viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></symbol>
+    <symbol id="i-archive" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></symbol>
+    <symbol id="i-sync" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 21v-5h5M21 3v5h-5"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
+    <symbol id="i-exit" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></symbol>
+    <symbol id="i-filter" viewBox="0 0 24 24"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></symbol>
+    <symbol id="i-sort" viewBox="0 0 24 24"><path d="M3 6h18M6 12h12M10 18h4"/></symbol>
+    <symbol id="i-paperclip" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></symbol>
+    <symbol id="i-sheet" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  </svg>
+
   <div id="app">
-    <header id="appHeader" class="hidden">
-      <div class="brand">
-        <img class="brand-mark" src="assets/maildaan.svg" alt="MailDaan" onerror="this.style.display='none'">
-        <span class="brand-name" data-i18n="appName">MailDaan</span>
-      </div>
-      <nav class="main-nav">
-        <button class="nav-btn active" id="navArchive" data-i18n="nav.archive">Archive</button>
-        <button class="nav-btn" id="navSync" data-i18n="nav.syncEmails">Sync Emails</button>
-        <button class="nav-btn" id="navSettings" data-i18n="nav.settings">Settings</button>
-      </nav>
-      <div class="header-actions">
-        <button id="btnExport" class="header-btn" data-i18n="nav.exportExcel" title="Export to Excel">Export to Excel</button>
-        <div class="lang-switch">
-          <span class="lang-label" data-i18n="languageSwitchTitle">Language</span>
-          <select id="langSelect">
-            <option value="fa" lang="fa">فارسی</option>
-            <option value="en">English</option>
-          </select>
+    <div id="shell">
+      <!-- Navigation sidebar (rendered on the right in Persian/RTL) -->
+      <aside id="sidebar">
+        <div class="brand">
+          <svg class="brand-mark"><use href="#i-logo"/></svg>
+          <span class="brand-name">MailDaan</span>
         </div>
-      </div>
-    </header>
 
-    <main id="mainContent">
-      <!-- Language selection (first run) -->
-      <section id="screenLanguage" class="center-screen">
-        <div class="logo-card">
-          <svg class="logo-icon" viewBox="0 0 64 64" aria-hidden="true">
-            <rect x="6" y="14" width="52" height="38" rx="6" fill="#1F4E79"/>
-            <path d="M8 20l24 17 24-17" fill="none" stroke="#F2C94C" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
-            <rect x="14" y="40" width="36" height="4" rx="2" fill="#9FC2E8"/>
-          </svg>
-          <h1 class="app-title">MailDaan</h1>
-          <p class="choose-lang">Choose your language &nbsp;/&nbsp; <span lang="fa">زبان خود را انتخاب کنید</span></p>
-          <div class="lang-buttons">
-            <button class="lang-btn" id="btnLangFa" lang="fa">فارسی</button>
-            <button class="lang-btn" id="btnLangEn">English</button>
-          </div>
+        <div class="sidebar-section">
+          <div class="sidebar-label" data-i18n="accounts.title">Email Accounts</div>
+          <div id="accountList" class="account-list"></div>
+          <button class="sidebar-link add-account" id="btnAddAccount">
+            <svg class="ic"><use href="#i-plus"/></svg>
+            <span data-i18n="accounts.add">Add Account</span>
+          </button>
         </div>
-      </section>
 
-      <!-- IMAP configuration (first run) -->
-      <section id="screenConfig" class="center-screen hidden">
-        <div class="form-card">
-          <h1 class="form-title" data-i18n="config.title">Email Account</h1>
-          <p class="form-subtitle" data-i18n="config.subtitle">Configure your IMAP account to start archiving.</p>
-          <form id="configForm" autocomplete="off" novalidate>
-            <label class="field">
-              <span data-i18n="config.imapServer">IMAP Server</span>
-              <input type="text" id="cfgHost" placeholder="imap.example.com" required>
-            </label>
-            <label class="field field-port">
-              <span data-i18n="config.imapPort">IMAP Port</span>
-              <input type="number" id="cfgPort" min="1" max="65535" value="993" required>
-            </label>
-            <label class="field">
-              <span data-i18n="config.username">Email Address / Username</span>
-              <input type="text" id="cfgUser" placeholder="you@example.com" required>
-            </label>
-            <label class="field">
-              <span data-i18n="config.password">Password</span>
-              <input type="password" id="cfgPass" required>
-            </label>
-            <div id="cfgError" class="form-error hidden"></div>
-            <button type="submit" class="primary-btn" id="cfgSubmit" data-i18n="config.startSync">Start Synchronization</button>
-            <p class="form-note" data-i18n="config.requirements">Your password is used only for this synchronization and is never stored.</p>
-          </form>
+        <nav id="mainNav" class="sidebar-section">
+          <button class="sidebar-link nav-item" id="navArchive">
+            <svg class="ic"><use href="#i-archive"/></svg>
+            <span data-i18n="nav.archive">Archive</span>
+          </button>
+          <button class="sidebar-link nav-item" id="navSync">
+            <svg class="ic"><use href="#i-sync"/></svg>
+            <span data-i18n="nav.syncEmails">Sync Emails</span>
+          </button>
+          <button class="sidebar-link nav-item" id="navSettings">
+            <svg class="ic"><use href="#i-settings"/></svg>
+            <span data-i18n="nav.settings">Settings</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-bottom">
+          <button class="sidebar-link" id="btnTheme">
+            <svg class="ic"><use href="#i-sun" id="themeIcon"/></svg>
+            <span data-i18n="theme.light" id="themeLabel">Light</span>
+          </button>
+          <button class="sidebar-link" id="btnLang">
+            <svg class="ic"><use href="#i-globe"/></svg>
+            <span id="langLabel">English</span>
+          </button>
+          <button class="sidebar-link danger" id="btnExit">
+            <svg class="ic"><use href="#i-exit"/></svg>
+            <span data-i18n="nav.exit">Exit Application</span>
+          </button>
         </div>
-      </section>
+      </aside>
 
-      <!-- Archive browser -->
-      <section id="screenArchive" class="archive-view hidden">
-        <aside class="folder-sidebar" id="folderSidebar">
-          <div class="sidebar-title" data-i18n="folders.allEmails">All Emails</div>
-          <ul class="folder-list" id="folderList"></ul>
-        </aside>
-        <div class="list-pane">
-          <div class="toolbar">
-            <input type="search" id="searchBox" class="search-box" data-i18n-ph="list.searchPlaceholder" placeholder="Search…">
-            <button class="toolbar-btn" id="btnFilters" data-i18n="filters.title">Filters</button>
-            <select id="sortSelect" class="sort-select">
-              <option value="newest" data-i18n="filters.newest">Newest first</option>
-              <option value="oldest" data-i18n="filters.oldest">Oldest first</option>
-              <option value="sender" data-i18n="filters.sender">Sender</option>
-              <option value="subject" data-i18n="filters.subject">Subject</option>
-            </select>
-          </div>
-          <div id="filterPanel" class="filter-panel hidden">
-            <label class="filter-field"><span data-i18n="filters.folder">Folder</span>
-              <select id="filterFolder"></select></label>
-            <label class="filter-field"><span data-i18n="filters.dateFrom">Date from</span>
-              <input type="date" id="filterFrom"></label>
-            <label class="filter-field"><span data-i18n="filters.dateTo">Date to</span>
-              <input type="date" id="filterTo"></label>
-            <label class="filter-field filter-party"><span data-i18n="filters.party">Sender or recipient</span>
-              <input type="text" id="filterParty"></label>
-            <div class="filter-actions">
-              <button class="primary-btn small" id="btnApplyFilters" data-i18n="filters.apply">Apply</button>
-              <button class="toolbar-btn" id="btnResetFilters" data-i18n="filters.reset">Reset Filters</button>
+      <div id="mainColumn">
+        <header id="topbar">
+          <h1 class="page-title" id="pageTitle">MailDaan</h1>
+          <div class="topbar-right">
+            <div class="account-chip hidden" id="topbarAccount">
+              <svg class="ic"><use href="#i-user"/></svg>
+              <span id="topbarAccountName"></span>
             </div>
+            <button class="btn btn-accent hidden" id="btnExport">
+              <svg class="ic"><use href="#i-sheet"/></svg>
+              <span data-i18n="nav.exportExcel">Export to Excel</span>
+            </button>
           </div>
-          <div class="message-list" id="messageList"></div>
-          <div class="pagination" id="pagination"></div>
-        </div>
-      </section>
+        </header>
 
-      <!-- Message viewer -->
-      <section id="screenViewer" class="viewer-view hidden">
-        <button class="back-btn" id="btnBack">‹ <span data-i18n="nav.archive">Archive</span></button>
-        <div class="viewer-content" id="viewerContent"></div>
-      </section>
+        <main id="content">
+          <!-- First-run language selection -->
+          <section id="screenLanguage" class="welcome-screen">
+            <div class="welcome-card">
+              <svg class="welcome-logo"><use href="#i-logo"/></svg>
+              <h1 class="welcome-title">MailDaan</h1>
+              <p class="welcome-sub" data-i18n="firstRun.choose">Choose your language</p>
+              <div class="lang-cards">
+                <button class="lang-card" id="btnLangFa">
+                  <span class="lang-card-name" lang="fa">فارسی</span>
+                  <span class="lang-card-en">Persian</span>
+                </button>
+                <button class="lang-card" id="btnLangEn">
+                  <span class="lang-card-name">English</span>
+                  <span class="lang-card-en">English</span>
+                </button>
+              </div>
+              <p class="welcome-foot" data-i18n="firstRun.tagline">Offline email archive for Windows</p>
+            </div>
+          </section>
 
-      <!-- Sync -->
-      <section id="screenSync" class="center-screen hidden">
-        <div class="sync-card" id="syncCard"></div>
-      </section>
+          <!-- Add / edit email account -->
+          <section id="screenAccount" class="form-screen hidden">
+            <div class="form-card wide">
+              <h2 class="form-title" id="accountFormTitle" data-i18n="accounts.add">Add Account</h2>
+              <p class="form-subtitle" data-i18n="accounts.subtitle">Enter the IMAP details for this email account.</p>
+              <form id="accountForm" autocomplete="off" novalidate>
+                <div class="form-grid">
+                  <label class="field"><span data-i18n="accounts.display">Display name (optional)</span>
+                    <input type="text" id="accDisplayName" placeholder="Work, Personal…"></label>
+                  <label class="field"><span data-i18n="config.username">Email Address / Username</span>
+                    <input type="text" id="accEmail" placeholder="you@example.com" required></label>
+                  <label class="field"><span data-i18n="config.imapServer">IMAP Server</span>
+                    <input type="text" id="accHost" placeholder="imap.example.com" required></label>
+                  <label class="field field-port"><span data-i18n="config.imapPort">IMAP Port</span>
+                    <input type="number" id="accPort" min="1" max="65535" value="993" required></label>
+                </div>
+                <label class="field field-half" id="accPasswordField">
+                  <span data-i18n="config.password">Password</span>
+                  <input type="password" id="accPassword">
+                </label>
+                <div id="accError" class="form-error hidden"></div>
+                <div class="form-actions">
+                  <button type="button" class="btn" id="accCancel" data-i18n="common.cancel">Cancel</button>
+                  <button type="submit" class="btn btn-primary" id="accSubmit" data-i18n="accounts.create">Add Account</button>
+                </div>
+                <p class="form-note" data-i18n="config.requirements">Your password is used only for this synchronization and is never stored.</p>
+              </form>
+            </div>
+          </section>
 
-      <!-- Settings -->
-      <section id="screenSettings" class="center-screen hidden">
-        <div class="form-card">
-          <h1 class="form-title" data-i18n="settings.title">Settings</h1>
-          <form id="settingsForm" autocomplete="off" novalidate>
-            <label class="field"><span data-i18n="settings.language">Interface Language</span>
-              <select id="settingsLang">
-                <option value="fa" lang="fa">فارسی</option>
-                <option value="en">English</option>
-              </select></label>
-            <label class="field"><span data-i18n="settings.imapServer">IMAP Server</span>
-              <input type="text" id="setHost"></label>
-            <label class="field field-port"><span data-i18n="settings.imapPort">IMAP Port</span>
-              <input type="number" id="setPort" min="1" max="65535"></label>
-            <label class="field"><span data-i18n="settings.username">Email Address / Username</span>
-              <input type="text" id="setUser"></label>
-            <div id="setError" class="form-error hidden"></div>
-            <button type="submit" class="primary-btn" data-i18n="settings.save">Save Settings</button>
-            <p class="form-note" data-i18n="settings.note">The password is never stored.</p>
-          </form>
-        </div>
-      </section>
-    </main>
+          <!-- Archive browser: folders | message list | message detail -->
+          <section id="screenArchive" class="archive-view hidden">
+            <aside class="folder-pane">
+              <div class="sidebar-label" data-i18n="folders.title">Folders</div>
+              <ul class="folder-list" id="folderList"></ul>
+            </aside>
+            <div class="list-pane">
+              <div class="list-toolbar">
+                <div class="search-wrap">
+                  <svg class="ic search-ic"><use href="#i-search"/></svg>
+                  <input type="search" id="searchBox" data-i18n-ph="list.searchPlaceholder" placeholder="Search…">
+                </div>
+                <button class="btn btn-ghost" id="btnFilters">
+                  <svg class="ic"><use href="#i-filter"/></svg>
+                  <span data-i18n="filters.title">Filters</span>
+                </button>
+                <select id="sortSelect" class="select">
+                  <option value="newest" data-i18n="filters.newest">Newest first</option>
+                  <option value="oldest" data-i18n="filters.oldest">Oldest first</option>
+                  <option value="sender" data-i18n="filters.sender">Sender</option>
+                  <option value="subject" data-i18n="filters.subject">Subject</option>
+                </select>
+              </div>
+              <div id="filterPanel" class="filter-panel hidden">
+                <label class="filter-field"><span data-i18n="filters.folder">Folder</span>
+                  <select id="filterFolder" class="select"></select></label>
+                <label class="filter-field"><span data-i18n="filters.dateFrom">Date from</span>
+                  <input type="date" id="filterFrom" class="select"></label>
+                <label class="filter-field"><span data-i18n="filters.dateTo">Date to</span>
+                  <input type="date" id="filterTo" class="select"></label>
+                <label class="filter-field"><span data-i18n="filters.party">Sender or recipient</span>
+                  <input type="text" id="filterParty" class="select"></label>
+                <div class="filter-actions">
+                  <button class="btn btn-primary small" id="btnApplyFilters" data-i18n="filters.apply">Apply</button>
+                  <button class="btn small" id="btnResetFilters" data-i18n="filters.reset">Reset</button>
+                </div>
+              </div>
+              <div class="message-list" id="messageList"></div>
+              <div class="pagination" id="pagination"></div>
+            </div>
+            <div class="detail-pane" id="detailPane">
+              <div class="empty-pane" id="detailEmpty">
+                <svg class="empty-ic"><use href="#i-mail"/></svg>
+                <p data-i18n="empty.selectMessage">Select a message to read it</p>
+              </div>
+              <div class="detail-scroll hidden" id="detailContent"></div>
+            </div>
+          </section>
 
-    <footer id="appFooter" class="hidden">
-      <span data-i18n="copyright">© 2026 MailDaan</span>
-      <span class="footer-dev">
-        <span data-i18n="developedBy">Developed by</span>
-        <a href="#" id="devLink">Titanium</a>
-      </span>
-    </footer>
+          <!-- Synchronization workspace -->
+          <section id="screenSync" class="sync-view hidden">
+            <div class="sync-side">
+              <div class="card">
+                <h2 class="card-title" data-i18n="sync.title">Synchronization</h2>
+                <div class="sync-account" id="syncAccountBox"></div>
+                <div class="sync-actions" id="syncControls"></div>
+              </div>
+              <div class="card">
+                <h2 class="card-title" data-i18n="sync.statusTitle">Status</h2>
+                <div class="sync-status-box" id="syncStatusBox"></div>
+              </div>
+            </div>
+            <div class="sync-main">
+              <div class="card" id="syncCard"></div>
+            </div>
+          </section>
+
+          <!-- Settings -->
+          <section id="screenSettings" class="settings-view hidden">
+            <div class="card settings-card">
+              <h2 class="card-title" data-i18n="settings.appTitle">Application Settings</h2>
+              <label class="field"><span data-i18n="settings.language">Interface Language</span>
+                <select id="settingsLang" class="select">
+                  <option value="fa" lang="fa">فارسی</option>
+                  <option value="en">English</option>
+                </select></label>
+              <label class="field"><span data-i18n="settings.theme">Theme</span>
+                <select id="settingsTheme" class="select">
+                  <option value="light" data-i18n="theme.light">Light</option>
+                  <option value="dark" data-i18n="theme.dark">Dark</option>
+                </select></label>
+              <div class="form-actions">
+                <button class="btn btn-primary" id="btnSaveAppSettings" data-i18n="settings.save">Save</button>
+              </div>
+            </div>
+            <div class="card settings-card">
+              <h2 class="card-title" data-i18n="settings.accountTitle">Email Account Settings</h2>
+              <label class="field"><span data-i18n="accounts.account">Account</span>
+                <select id="settingsAccount" class="select"></select></label>
+              <form id="accountSettingsForm" autocomplete="off" novalidate>
+                <label class="field"><span data-i18n="accounts.display">Display name (optional)</span>
+                  <input type="text" id="setDisplayName"></label>
+                <label class="field"><span data-i18n="config.username">Email Address / Username</span>
+                  <input type="text" id="setUser" required></label>
+                <div class="form-grid two">
+                  <label class="field"><span data-i18n="config.imapServer">IMAP Server</span>
+                    <input type="text" id="setHost" required></label>
+                  <label class="field field-port"><span data-i18n="config.imapPort">IMAP Port</span>
+                    <input type="number" id="setPort" min="1" max="65535" required></label>
+                </div>
+                <div id="setError" class="form-error hidden"></div>
+                <div class="form-actions">
+                  <button type="button" class="btn btn-danger" id="btnRemoveAccount">
+                    <svg class="ic"><use href="#i-trash"/></svg>
+                    <span data-i18n="accounts.remove">Remove Account</span>
+                  </button>
+                  <span class="form-actions-right">
+                    <button type="button" class="btn" id="btnCancelAccountSettings" data-i18n="common.cancel">Cancel</button>
+                    <button type="submit" class="btn btn-primary" data-i18n="settings.save">Save</button>
+                  </span>
+                </div>
+                <p class="form-note" data-i18n="settings.note">The password is never stored. You will be asked for it when syncing.</p>
+              </form>
+            </div>
+          </section>
+        </main>
+
+        <footer id="appFooter">
+          <span data-i18n="copyright">© 2026 MailDaan</span>
+          <span class="footer-dev">
+            <span data-i18n="developedBy">Developed by</span>
+            <a href="#" id="devLink">Titanium</a>
+          </span>
+        </footer>
+      </div>
+    </div>
   </div>
 
-  <!-- Modal -->
   <div id="modalOverlay" class="modal-overlay hidden">
     <div class="modal-card" id="modalCard"></div>
   </div>
