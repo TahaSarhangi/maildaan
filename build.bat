@@ -10,11 +10,11 @@ echo [2/3] Running PyInstaller...
 python -m PyInstaller --noconfirm --clean maildaan.spec || goto :error
 
 echo [3/3] Creating release ZIP...
-powershell -NoProfile -Command "Compress-Archive -Path 'dist\MailDaan' -DestinationPath 'dist\MailDaan-1.1.0.zip' -Force" || goto :error
+powershell -NoProfile -Command "Compress-Archive -Path 'dist\MailDaan' -DestinationPath 'dist\MailDaan-1.1.1.zip' -Force" || goto :error
 
 echo.
 echo Build complete: dist\MailDaan\MailDaan.exe
-echo Release ZIP:    dist\MailDaan-1.1.0.zip
+echo Release ZIP:    dist\MailDaan-1.1.1.zip
 exit /b 0
 
 :error

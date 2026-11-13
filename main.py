@@ -5,6 +5,7 @@ pywebview application with a JavaScript-to-Python bridge. User data lives in
 """
 
 import datetime as dt
+import functools
 import json
 import logging
 import os
@@ -16,6 +17,7 @@ import traceback
 import webview
 
 import accounts
+import applock
 import config
 import dialogs
 import export
@@ -23,6 +25,19 @@ import imap_sync
 import storage
 
 logger = logging.getLogger("maildaan")
+
+# While the application is locked, sensitive bridge methods return an error
+# instead of running. Lock enforcement happens here in Python — not only by
+# hiding the UI — so no backend operation can be reached before the user
+# authenticates. Requests that must stay available while locked (unlock,
+# settings of the interface itself, exiting) are left undecorated.
+def requires_unlock(method):
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        if self.lock.enabled and not self.unlocked:
+            return {"error_key": "lock.locked"}
+        return method(self, *args, **kwargs)
+    return wrapper
 
 
 def setup_logging():
@@ -53,6 +68,8 @@ class AppApi:
         except Exception:
             logger.error("legacy adoption failed\n%s", traceback.format_exc())
         self.settings = config.load_settings()
+        self.lock = applock.AppLock()
+        self.unlocked = not self.lock.enabled
         self.sync_state = None
         self.cancel_event = None
         self.sync_thread = None
@@ -60,6 +77,76 @@ class AppApi:
         self.last_report = None
         self._password = ""  # in-memory only, cleared when sync ends
         self._lock = threading.Lock()
+
+    # -------------------------------------------------------- application lock
+
+    def _locked(self):
+        return self.lock.enabled and not self.unlocked
+
+    def getInitialState(self):
+        self.settings = config.load_settings()
+        registry = [accounts.public_account(a) for a in accounts.all_accounts()]
+        active = self._resolve_active()
+        logger.info("frontend bootstrap: %d account(s) configured", len(registry))
+        return {
+            "language": self.settings.get("language"),
+            "theme": self.settings.get("theme") or "light",
+            "accounts": registry,
+            "active_account_id": active["id"] if active else None,
+            "version": config.APP_VERSION,
+            "lock_enabled": self.lock.enabled,
+            "locked": self._locked(),
+        }
+
+    def unlock(self, password):
+        """Verify the application password and unlock this session."""
+        if not self.lock.enabled:
+            return {"ok": True, "unlocked": True}
+        if self.lock.verify(password):
+            self.unlocked = True
+            return {"ok": True, "unlocked": True}
+        return {"error_key": "lock.invalidPassword"}
+
+    def getAppLockState(self):
+        return {"enabled": self.lock.enabled}
+
+    @requires_unlock
+    def enableAppPassword(self, new_password, confirm):
+        if self.lock.enabled:
+            return {"error_key": "lock.alreadyEnabled"}
+        if not isinstance(new_password, str) or len(new_password) < 8:
+            return {"error_key": "lock.tooShort"}
+        if new_password != confirm:
+            return {"error_key": "lock.mismatch"}
+        self.lock.enable(new_password)
+        self.unlocked = True
+        logger.info("application password enabled")
+        return {"ok": True}
+
+    @requires_unlock
+    def changeAppPassword(self, current, new_password, confirm):
+        if not self.lock.enabled:
+            return {"error_key": "lock.notEnabled"}
+        if not self.lock.verify(current):
+            return {"error_key": "lock.invalidPassword"}
+        if not isinstance(new_password, str) or len(new_password) < 8:
+            return {"error_key": "lock.tooShort"}
+        if new_password != confirm:
+            return {"error_key": "lock.mismatch"}
+        self.lock.enable(new_password)
+        logger.info("application password changed")
+        return {"ok": True}
+
+    @requires_unlock
+    def disableAppPassword(self, current):
+        if not self.lock.enabled:
+            return {"error_key": "lock.notEnabled"}
+        if not self.lock.verify(current):
+            return {"error_key": "lock.invalidPassword"}
+        self.lock.disable()
+        self.unlocked = True
+        logger.info("application password disabled")
+        return {"ok": True}
 
     # -------------------------------------------------------- accounts/themes
 
@@ -79,19 +166,6 @@ class AppApi:
             return None, None
         return account, accounts.account_paths(account)
 
-    def getInitialState(self):
-        self.settings = config.load_settings()
-        registry = [accounts.public_account(a) for a in accounts.all_accounts()]
-        active = self._resolve_active()
-        logger.info("frontend bootstrap: %d account(s) configured", len(registry))
-        return {
-            "language": self.settings.get("language"),
-            "theme": self.settings.get("theme") or "light",
-            "accounts": registry,
-            "active_account_id": active["id"] if active else None,
-            "version": config.APP_VERSION,
-        }
-
     def setLanguage(self, lang):
         if lang not in ("fa", "en"):
             return {"error": "invalid language"}
@@ -108,9 +182,11 @@ class AppApi:
         config.save_settings(self.settings)
         return {"ok": True}
 
+    @requires_unlock
     def getAccounts(self):
         return [accounts.public_account(a) for a in accounts.all_accounts()]
 
+    @requires_unlock
     def addAccount(self, display_name, email, host, port):
         try:
             port = int(port)
@@ -129,6 +205,7 @@ class AppApi:
             config.save_settings(self.settings)
         return {"ok": True, "account": accounts.public_account(account)}
 
+    @requires_unlock
     def updateAccount(self, account_id, display_name, email, host, port):
         try:
             port = int(port)
@@ -143,6 +220,7 @@ class AppApi:
             return {"error_key": "accounts.notFound"}
         return {"ok": True, "account": accounts.public_account(account)}
 
+    @requires_unlock
     def removeAccount(self, account_id):
         if self.sync_running() and self.sync_account_id == account_id:
             return {"error_key": "accounts.removeWhileSyncing"}
@@ -156,6 +234,7 @@ class AppApi:
             config.save_settings(self.settings)
         return {"ok": True}
 
+    @requires_unlock
     def selectAccount(self, account_id):
         if self.sync_running() and self.sync_account_id != account_id:
             return {"error_key": "sync.switchWhileRunning"}
@@ -172,6 +251,7 @@ class AppApi:
     def sync_running(self):
         return bool(self.sync_thread and self.sync_thread.is_alive())
 
+    @requires_unlock
     def startSync(self, account_id, password):
         if self.sync_running():
             return {"error_key": "sync.statusRunning"}
@@ -241,6 +321,7 @@ class AppApi:
             except Exception:
                 pass
 
+    @requires_unlock
     def getSyncProgress(self):
         if self.sync_state:
             snapshot = self.sync_state.snapshot()
@@ -250,6 +331,7 @@ class AppApi:
                 "total_processed": 0, "overall_percent": 0,
                 "connected": False, "sync_account_id": None}
 
+    @requires_unlock
     def cancelSync(self):
         if self.cancel_event:
             self.cancel_event.set()
@@ -269,6 +351,7 @@ class AppApi:
 
     # -------------------------------------------------------------- archive
 
+    @requires_unlock
     def getStats(self):
         account, paths = self._active_paths()
         if account is None:
@@ -280,6 +363,7 @@ class AppApi:
         stats["account_id"] = account["id"]
         return stats
 
+    @requires_unlock
     def listFolders(self):
         account, paths = self._active_paths()
         if account is None:
@@ -287,10 +371,12 @@ class AppApi:
         with storage.ArchiveDB(paths["db"]) as db:
             return db.list_folders()
 
+    @requires_unlock
     def queryMessages(self, filters_json, sort="newest", page=1, page_size=50):
         account, paths = self._active_paths()
         if account is None:
-            return {"total": 0, "page": int(page or 1), "rows": []}
+            return {"total": 0, "page": int(page or 1), "rows": [],
+                    "suggestion": None}
         filters = {}
         try:
             if filters_json:
@@ -298,10 +384,10 @@ class AppApi:
         except ValueError:
             filters = {}
         with storage.ArchiveDB(paths["db"]) as db:
-            total = db.count_messages(filters)
-            rows = db.query_messages(filters, sort, int(page or 1), int(page_size or 50))
-            return {"total": total, "page": int(page or 1), "rows": rows}
+            return db.search_query(filters, sort, int(page or 1),
+                                   int(page_size or 50))
 
+    @requires_unlock
     def getMessage(self, message_id):
         account, paths = self._active_paths()
         if account is None:
@@ -317,6 +403,7 @@ class AppApi:
                     os.path.join(paths["root"], att.get("relpath") or ""))
             return msg
 
+    @requires_unlock
     def saveAttachment(self, message_id, attachment_id):
         account, paths = self._active_paths()
         if account is None:
@@ -337,6 +424,7 @@ class AppApi:
             return {"error": str(exc)}
         return {"path": target}
 
+    @requires_unlock
     def saveAllAttachments(self, message_id):
         account, paths = self._active_paths()
         if account is None:
@@ -369,6 +457,7 @@ class AppApi:
             return {"error_key": "common.saveFailed"}
         return {"path": target_dir, "count": len(saved)}
 
+    @requires_unlock
     def saveEml(self, message_id):
         account, paths = self._active_paths()
         if account is None:
@@ -393,6 +482,7 @@ class AppApi:
 
     # --------------------------------------------------------------- export
 
+    @requires_unlock
     def exportExcel(self, filters_json, sort="newest"):
         account, paths = self._active_paths()
         if account is None:
@@ -420,6 +510,7 @@ class AppApi:
 
     # ------------------------------------------------------------ external
 
+    @requires_unlock
     def openExternal(self, url):
         if not url:
             return {"error": "no url"}

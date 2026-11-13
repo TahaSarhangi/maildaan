@@ -27,6 +27,10 @@ const state = {
   total: 0,
   folderDisplay: {},
   busy: false,
+  lockEnabled: false,
+  appPwMode: "enable",         // 'enable' | 'change'
+  languageChosen: false,
+  searchSeq: 0,
 };
 
 /* ------------------------------------------------------------------ helpers */
@@ -140,6 +144,10 @@ function applyTranslations() {
   document.querySelectorAll("[data-i18n-ph]").forEach((el) => {
     const key = el.getAttribute("data-i18n-ph");
     el.placeholder = t(key, el.placeholder);
+  });
+  document.querySelectorAll("[data-i18n-title]").forEach((el) => {
+    const key = el.getAttribute("data-i18n-title");
+    el.title = t(key, el.title);
   });
   document.documentElement.lang = state.lang;
   document.body.dir = state.lang === "fa" ? "rtl" : "ltr";
@@ -428,16 +436,56 @@ function emptyStateHtml(kind) {
     t("empty.emptyFolderBody", "This folder does not contain any messages."), "");
 }
 
+function highlight(text, query) {
+  const escaped = esc(text);
+  // Escape the query the same way so it matches entities literally and
+  // never matches *inside* an entity (which would corrupt the markup).
+  const q = esc((query || "").trim());
+  if (!q) return escaped;
+  const pattern = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  try {
+    return escaped.replace(new RegExp("(" + pattern + ")", "gi"), "<mark>$1</mark>");
+  } catch (e) { return escaped; }
+}
+
+function renderSearchSuggestion(suggestion) {
+  const box = $("searchSuggestion");
+  if (!suggestion || !suggestion.text) {
+    box.classList.add("hidden");
+    box.innerHTML = "";
+    return;
+  }
+  const quote = state.lang === "fa" ? "«" : "“";
+  const closeQuote = state.lang === "fa" ? "»" : "”";
+  box.classList.remove("hidden");
+  box.innerHTML =
+    '<span>' + esc(t("search.didYouMean", "Did you mean")) + "</span>" +
+    '<button type="button" id="suggestionBtn">' +
+      quote + esc(suggestion.text) + closeQuote + "</button>" +
+    '<span>' + esc(t("search.was", "?")) + "</span>";
+  $("suggestionBtn").addEventListener("click", () => {
+    $("searchBox").value = suggestion.text;
+    state.filters.search = suggestion.text;
+    state.page = 1;
+    if (state.view === "archive") loadMessages();
+  });
+}
+
 async function loadMessages() {
   if (!state.accounts.length) {
     $("messageList").innerHTML = emptyStateHtml("noAccount");
     bindEmptyActions();
     $("pagination").innerHTML = "";
+    renderSearchSuggestion(null);
     return;
   }
+  const seq = ++state.searchSeq;
   const filters = currentFilters();
   const result = await api().queryMessages(JSON.stringify(filters), state.sort, state.page, PAGE_SIZE);
+  // Ignore stale asynchronous results when the user changed the query.
+  if (seq !== state.searchSeq) return;
   state.total = result.total;
+  renderSearchSuggestion(result.suggestion || null);
   const list = $("messageList");
   if (!result.rows.length) {
     const stats = await api().getStats();
@@ -449,6 +497,7 @@ async function loadMessages() {
     renderPagination();
     return;
   }
+  const query = filters.search || "";
   let html = "";
   for (const m of result.rows) {
     const sender = m.sender_name || m.sender_email || "—";
@@ -458,11 +507,11 @@ async function loadMessages() {
       : "";
     html +=
       '<div class="message-row" data-id="' + m.id + '">' +
-      '<div class="msg-sender">' + esc(sender) + "</div>" +
+      '<div class="msg-sender">' + highlight(sender, query) + "</div>" +
       '<div class="msg-date">' + formatDate(m.date_utc) + "</div>" +
-      '<div class="msg-subject">' + esc(subject) + "</div>" +
+      '<div class="msg-subject">' + highlight(subject, query) + "</div>" +
       '<div class="msg-meta">' + att + "</div>" +
-      '<div class="msg-preview">' + esc(m.preview || m.plain_body || "") + "</div>" +
+      '<div class="msg-preview">' + highlight(m.preview || m.plain_body || "", query) + "</div>" +
       "</div>";
   }
   list.innerHTML = html;
@@ -493,14 +542,22 @@ function currentFilters() {
 function renderPagination() {
   const pages = Math.max(1, Math.ceil(state.total / PAGE_SIZE));
   const cur = Math.min(state.page, pages);
+  // Outward-pointing arrows: Previous points back (left in LTR, right in
+  // RTL) with the arrow on the outer side of its label; Next mirrors it.
+  // SVG icons are used because the angle-quote characters get mirrored by
+  // the bidirectional algorithm.
+  const prevArrow = state.lang === "fa" ? "arrow-right" : "arrow-left";
+  const nextArrow = state.lang === "fa" ? "arrow-left" : "arrow-right";
+  const prevLabel = esc(t("list.prev", "Previous"));
+  const nextLabel = esc(t("list.next", "Next"));
   $("pagination").innerHTML =
     '<button id="pgPrev" ' + (cur <= 1 ? "disabled" : "") + ">" +
-      (state.lang === "fa" ? "›" : "‹") + " " + esc(t("list.prev", "Previous")) + "</button>" +
+      icon(prevArrow) + "<span>" + prevLabel + "</span></button>" +
     "<span>" + esc(t("list.page", "Page")) + " " + toDigits(cur) + " " +
       esc(t("list.of", "of")) + " " + toDigits(pages) + " — " +
       toDigits(state.total) + " " + esc(t("folders.messages", "messages")) + "</span>" +
     '<button id="pgNext" ' + (cur >= pages ? "disabled" : "") + ">" +
-      esc(t("list.next", "Next")) + " " + (state.lang === "fa" ? "‹" : "›") + "</button>";
+      "<span>" + nextLabel + "</span>" + icon(nextArrow) + "</button>";
   const prev = $("pgPrev"), next = $("pgNext");
   if (prev) prev.addEventListener("click", () => { state.page = cur - 1; loadMessages(); });
   if (next) next.addEventListener("click", () => { state.page = cur + 1; loadMessages(); });
@@ -867,6 +924,7 @@ async function loadSettingsForms() {
     sel.value = s.activeAccountId || s.accounts[0].id;
     fillAccountSettingsForm(sel.value);
   }
+  renderAppPasswordCard();
 }
 
 function fillAccountSettingsForm(accountId) {
@@ -942,6 +1000,184 @@ function bindSettingsForms() {
   });
 }
 
+/* --------------------------------------------------- application lock screen */
+
+function bindEyeToggles() {
+  document.querySelectorAll(".eye-toggle").forEach((btn) => {
+    if (btn.dataset.bound) return;
+    btn.dataset.bound = "1";
+    btn.addEventListener("click", () => {
+      const input = document.getElementById(btn.getAttribute("data-target"));
+      if (!input) return;
+      const show = input.getAttribute("type") === "password";
+      input.setAttribute("type", show ? "text" : "password");
+      btn.querySelector("use").setAttribute("href", show ? "#i-eye-off" : "#i-eye");
+      btn.title = t(show ? "lock.hidePassword" : "lock.showPassword", btn.title);
+    });
+  });
+}
+
+async function submitUnlock(e) {
+  e.preventDefault();
+  const err = $("lockError");
+  const input = $("lockPassword");
+  const btn = $("lockUnlock");
+  btn.disabled = true;
+  const res = await api().unlock(input.value);
+  btn.disabled = false;
+  if (res && res.ok) {
+    err.classList.add("hidden");
+    input.value = "";
+    finishBoot();
+    return;
+  }
+  err.textContent = t("lock.invalidPassword", "The application password is incorrect.");
+  err.classList.remove("hidden");
+  input.value = "";
+  input.focus();
+}
+
+function showLock() {
+  applyTranslations();
+  bindEyeToggles();
+  $("lockError").classList.add("hidden");
+  $("lockPassword").value = "";
+  show("lock", { chrome: false });
+  setTimeout(() => $("lockPassword").focus(), 50);
+}
+
+/* --------------------------------------------- application password settings */
+
+const COMMON_PASSWORDS = [
+  "password", "password1", "passw0rd", "12345678", "123456789", "qwerty",
+  "qwerty123", "letmein", "welcome", "welcome1", "admin", "admin123",
+  "iloveyou", "monkey", "dragon", "11111111", "12341234", "abc12345",
+  "maildaan", "maildaan123", "maildaan1",
+];
+
+function passwordStrength(pw) {
+  /* Lightweight locally-computed estimator (guidance, not validation).
+     Rewards length and variety without demanding arbitrary character
+     categories, and penalizes common passwords and predictable patterns. */
+  if (!pw) return { level: "", score: 0 };
+  let score = 0;
+  if (pw.length >= 8) score++;
+  if (pw.length >= 12) score++;
+  const variety = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^a-zA-Z0-9]/]
+    .filter((re) => re.test(pw)).length;
+  if (variety >= 2) score++;
+  if (variety >= 3 && pw.length >= 10) score++;
+  const low = pw.toLowerCase();
+  if (COMMON_PASSWORDS.indexOf(low) !== -1) score = 0;
+  if (/(.)\1\1/.test(pw)) score--;                                    // repeats
+  if (/(?:0123|1234|2345|3456|4567|5678|6789|abcd|bcde|qwerty|asdf|zxcv)/i.test(low))
+    score--;                                                          // sequences
+  const account = activeAccount();
+  const key = account && (account.email || "").split("@")[0].toLowerCase();
+  if (key && key.length >= 4 && low.indexOf(key) !== -1) score = Math.min(score, 1);
+  if (low.indexOf("maildaan") !== -1) score = Math.min(score, 1);
+  const level = score <= 1 ? "weak" : score === 2 ? "medium" : "strong";
+  return { level: level, score: Math.max(0, score) };
+}
+
+function updatePasswordMeter() {
+  const pw = $("appPwNew").value || "";
+  const meter = $("pwMeter");
+  const label = $("pwMeterLabel");
+  const res = passwordStrength(pw);
+  meter.classList.remove("weak", "medium", "strong");
+  label.classList.remove("weak", "medium", "strong");
+  if (!res.level) {
+    label.textContent = t("lock.strength", "Password strength");
+    return;
+  }
+  meter.classList.add(res.level);
+  label.classList.add(res.level);
+  label.textContent = t("lock.strength", "Password strength") + ": " +
+    t("lock." + res.level, res.level);
+}
+
+function renderAppPasswordCard() {
+  $("lockEnabledView").classList.toggle("hidden", !state.lockEnabled);
+  $("lockDisabledView").classList.toggle("hidden", state.lockEnabled);
+  hideAppPasswordForms();
+}
+
+function hideAppPasswordForms() {
+  $("appPasswordForm").classList.add("hidden");
+  $("appPwDisableForm").classList.add("hidden");
+  $("appPwError").classList.add("hidden");
+  $("appPwDisableError").classList.add("hidden");
+}
+
+function openAppPasswordForm(mode) {
+  state.appPwMode = mode;
+  $("appPwDisableForm").classList.add("hidden");
+  $("appPwCurrentField").classList.toggle("hidden", mode !== "change");
+  $("appPasswordForm").classList.remove("hidden");
+  $("appPasswordForm").reset();
+  $("pwMeter").classList.remove("weak", "medium", "strong");
+  $("pwMeterLabel").textContent = t("lock.strength", "Password strength");
+  $("pwMeterLabel").classList.remove("weak", "medium", "strong");
+  $("appPwError").classList.add("hidden");
+  $("appPwSubmit").textContent =
+    t(mode === "change" ? "lock.save" : "lock.enable", "Save");
+  bindEyeToggles();
+  $("appPw" + (mode === "change" ? "Current" : "New")).focus();
+}
+
+function bindAppPasswordForms() {
+  $("btnEnableAppPassword").addEventListener("click", () => openAppPasswordForm("enable"));
+  $("btnChangeAppPassword").addEventListener("click", () => openAppPasswordForm("change"));
+  $("appPwCancel").addEventListener("click", hideAppPasswordForms);
+  $("appPwNew").addEventListener("input", updatePasswordMeter);
+
+  $("btnDisableAppPassword").addEventListener("click", () => {
+    $("appPasswordForm").classList.add("hidden");
+    $("appPwDisableForm").classList.remove("hidden");
+    $("appPwDisableForm").reset();
+    $("appPwDisableError").classList.add("hidden");
+    bindEyeToggles();
+    $("appPwDisableCurrent").focus();
+  });
+  $("appPwDisableCancel").addEventListener("click", hideAppPasswordForms);
+
+  $("appPasswordForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const err = $("appPwError");
+    const fail = (key) => { err.textContent = t(key, key); err.classList.remove("hidden"); };
+    const cur = $("appPwCurrent").value;
+    const pw = $("appPwNew").value;
+    const confirm = $("appPwConfirm").value;
+    const res = state.appPwMode === "change"
+      ? await api().changeAppPassword(cur, pw, confirm)
+      : await api().enableAppPassword(pw, confirm);
+    if (res && res.ok) {
+      state.lockEnabled = true;
+      renderAppPasswordCard();
+      infoModal(t("settings.saved", "Saved"), t("settings.saved", "Saved"));
+      return;
+    }
+    if (res && res.error_key) fail(res.error_key);
+    else fail("common.error");
+  });
+
+  $("appPwDisableForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const err = $("appPwDisableError");
+    const res = await api().disableAppPassword($("appPwDisableCurrent").value);
+    if (res && res.ok) {
+      state.lockEnabled = false;
+      renderAppPasswordCard();
+      infoModal(t("settings.saved", "Saved"), t("settings.saved", "Saved"));
+      return;
+    }
+    err.textContent = res && res.error_key ? t(res.error_key, res.error_key)
+      : t("common.error", "Error");
+    err.classList.remove("hidden");
+  });
+}
+
 /* -------------------------------------------------------------------- search */
 
 function bindSearchAndFilters() {
@@ -1012,8 +1248,12 @@ function bindOnce() {
     e.preventDefault();
     api().openExternal("https://github.com/TahaSarhangi");
   });
+  $("lockForm").addEventListener("submit", submitUnlock);
+  $("lockExit").addEventListener("click", () => api().exitApp());
+  bindEyeToggles();
   bindAccountForm();
   bindSettingsForms();
+  bindAppPasswordForms();
   bindSearchAndFilters();
 }
 
@@ -1034,6 +1274,8 @@ async function bootstrap() {
   state.theme = initial.theme || "light";
   state.accounts = initial.accounts || [];
   state.activeAccountId = initial.active_account_id;
+  state.lockEnabled = !!initial.lock_enabled;
+  state.languageChosen = !!initial.language;
   applyTheme(state.theme);
   await loadLocale(state.lang);
   state.folderDisplay = (state.locale.folders && state.locale.folders.map) || {};
@@ -1042,7 +1284,17 @@ async function bootstrap() {
   updateThemeButton();
   renderAccounts();
 
-  if (!initial.language) {
+  if (initial.locked) {
+    showLock();
+    return;
+  }
+  finishBoot();
+}
+
+function finishBoot() {
+  /* Route into the application. Called from bootstrap after authentication
+     (or directly when no application password is enabled). */
+  if (!state.languageChosen) {
     show("language");
     return;
   }

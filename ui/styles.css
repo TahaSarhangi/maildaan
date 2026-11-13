@@ -54,6 +54,17 @@
 
 * { box-sizing: border-box; }
 
+/* Native form controls do not inherit fonts from the body in WebView2, so
+   force inheritance for every control. The Persian [lang="fa"] rule below
+   then applies Vazirmatn to inputs, selects, buttons and options as well,
+   including the search field, dropdowns, filters and dialogs. */
+input, button, select, textarea, option, optgroup {
+  font-family: inherit;
+}
+input, select, textarea {
+  font-size: inherit;
+}
+
 html, body {
   margin: 0;
   padding: 0;
@@ -102,6 +113,7 @@ body[dir="rtl"] { direction: rtl; }
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 7px;
   padding: 8px 14px;
+  min-height: 32px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   background: var(--surface);
@@ -258,6 +270,7 @@ body[dir="rtl"] { direction: rtl; }
 .field > span { display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px; color: var(--muted); }
 .field input, .select {
   width: 100%; padding: 8px 10px;
+  min-height: 32px;
   border: 1px solid var(--border-strong); border-radius: var(--radius);
   font-size: 13px; font-family: inherit;
   background: var(--surface); color: var(--text);
@@ -304,11 +317,18 @@ body[dir="rtl"] { direction: rtl; }
 
 .list-pane { flex: 0 0 400px; display: flex; flex-direction: column; min-width: 0;
   border-inline-end: 1px solid var(--border); background: var(--surface); }
-.list-toolbar { display: flex; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); align-items: center; }
-.search-wrap { position: relative; flex: 1 1 auto; }
+.list-toolbar { display: flex; gap: 8px; padding: 10px 12px;
+  border-bottom: 1px solid var(--border); align-items: center; flex-wrap: wrap; }
+.search-wrap { position: relative; flex: 1 1 150px; min-width: 128px; }
 .search-ic { position: absolute; inset-inline-start: 9px; top: 50%; transform: translateY(-50%);
   width: 15px; height: 15px; color: var(--muted); pointer-events: none; }
-.search-wrap input { padding-inline-start: 30px; }
+.search-wrap input { padding-inline-start: 30px; min-height: 32px; }
+/* Controls must never clip their labels: let the sort dropdown size to its
+   longest (localized) option instead of shrinking, and keep the filter
+   button compact-but-readable. The toolbar wraps rather than clipping. */
+.list-toolbar .btn { flex: 0 0 auto; }
+.list-toolbar .select { flex: 0 0 auto; width: auto; min-width: 148px;
+  padding-inline-end: 26px; }
 
 .filter-panel {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -340,11 +360,30 @@ body[dir="rtl"] { direction: rtl; }
 
 .pagination { display: flex; align-items: center; justify-content: center; gap: 12px;
   padding: 8px; background: var(--surface); border-top: 1px solid var(--border);
-  font-size: 12px; color: var(--muted); }
-.pagination button { padding: 4px 12px; border: 1px solid var(--border-strong);
+  font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+.pagination button { display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 12px; min-height: 28px;
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm); background: var(--surface); color: var(--text);
-  cursor: pointer; font-family: inherit; font-size: 12px; }
+  cursor: pointer; font-family: inherit; font-size: 12px; white-space: nowrap; }
+.pagination button .ic { width: 14px; height: 14px; }
+.pagination button:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
 .pagination button:disabled { opacity: .45; cursor: default; }
+
+/* Compact "Did you mean …?" suggestion bar. */
+.search-suggestion {
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+  padding: 7px 12px;
+  background: var(--warning-soft); color: var(--text);
+  border-bottom: 1px solid var(--border); font-size: 12.5px;
+}
+.search-suggestion button { border: none; background: transparent;
+  color: var(--primary); font-weight: 700; cursor: pointer;
+  font-family: inherit; font-size: 12.5px; padding: 1px 3px;
+  text-decoration: underline; text-underline-offset: 2px; }
+
+mark { background: var(--primary-soft); color: var(--primary);
+  border-radius: 2px; padding: 0 1px; }
 
 .detail-pane { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
 .empty-pane {
@@ -472,3 +511,78 @@ body[dir="rtl"] { direction: rtl; }
 [lang="fa"], body[dir="rtl"] {
   font-family: Vazirmatn, "Segoe UI", Tahoma, sans-serif;
 }
+
+/* --------------------------------------------------- application lock screen */
+
+.lock-screen {
+  align-items: center; justify-content: center; padding: 24px;
+  background: linear-gradient(160deg, var(--surface-2), var(--bg));
+}
+.lock-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow);
+  padding: 40px 36px; text-align: center; width: 100%; max-width: 380px;
+}
+.lock-logo { width: 56px; height: 56px; margin: 0 auto 10px; display: block;
+  fill: none; stroke: var(--primary); stroke-width: 1.4;
+  stroke-linecap: round; stroke-linejoin: round; }
+.lock-title { font-size: 22px; margin: 0 0 6px; color: var(--primary); font-weight: 700; }
+.lock-sub { color: var(--muted); font-size: 12.5px; margin: 0 0 20px; }
+.lock-field { position: relative; margin-bottom: 10px; }
+.lock-field input {
+  width: 100%; padding: 9px 36px 9px 11px; min-height: 34px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius);
+  font-size: 13.5px; font-family: inherit; background: var(--surface); color: var(--text);
+}
+.lock-field input:focus { outline: 2px solid color-mix(in srgb, var(--primary) 30%, transparent);
+  border-color: var(--primary); }
+.lock-error {
+  background: var(--danger-soft); border: 1px solid var(--danger);
+  color: var(--danger); padding: 7px 11px; border-radius: var(--radius);
+  font-size: 12.5px; margin: 0 0 10px; text-align: start;
+}
+.lock-unlock { width: 100%; margin-top: 2px; }
+.lock-exit {
+  margin-top: 16px; border: none; background: transparent;
+  color: var(--muted); font-size: 12px; cursor: pointer; font-family: inherit;
+  padding: 4px 8px;
+}
+.lock-exit:hover { color: var(--danger); }
+
+/* Show/hide password eye button inside password fields. */
+.eye-toggle {
+  position: absolute; inset-inline-end: 5px; top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; background: transparent; color: var(--muted);
+  cursor: pointer; padding: 5px; border-radius: var(--radius-sm);
+}
+.eye-toggle:hover { color: var(--primary); background: var(--surface-2); }
+.eye-toggle .ic { width: 15px; height: 15px; }
+.pw-input { position: relative; display: block; }
+.pw-input input { width: 100%; padding-inline-end: 34px; }
+
+/* Live password strength meter (guidance, not validation). */
+.pw-meter { display: block; height: 5px; background: var(--surface-3);
+  border-radius: 3px; margin-top: 7px; overflow: hidden; }
+.pw-meter > span { display: block; height: 100%; width: 0;
+  background: var(--border-strong); border-radius: 3px;
+  transition: width .15s ease, background .15s ease; }
+.pw-meter.weak > span { width: 34%; background: var(--danger); }
+.pw-meter.medium > span { width: 67%; background: var(--warning); }
+.pw-meter.strong > span { width: 100%; background: var(--success); }
+.pw-meter-label { display: block; font-size: 11.5px; font-weight: 600;
+  margin-top: 5px; color: var(--muted); }
+.pw-meter.weak .pw-meter-label, .pw-meter-label.weak { color: var(--danger); }
+.pw-meter.medium .pw-meter-label, .pw-meter-label.medium { color: var(--warning); }
+.pw-meter.strong .pw-meter-label, .pw-meter-label.strong { color: var(--success); }
+.pw-hint { display: block; color: var(--muted); font-size: 11px;
+  margin-top: 6px; line-height: 1.65; }
+
+.lock-status { display: flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 600; color: var(--success); margin: 0 0 14px; }
+.lock-status.muted { color: var(--muted); font-weight: 500; }
+.lock-status .ic { width: 16px; height: 16px; flex: 0 0 auto; }
+.ic-title { width: 15px; height: 15px; vertical-align: -2px;
+  margin-inline-end: 5px; color: var(--primary); }
+#appPasswordCard .form-actions .btn { flex: 0 0 auto; }

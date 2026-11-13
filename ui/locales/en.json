@@ -18,6 +18,41 @@
   },
   "languageSwitchTitle": "Language",
 
+  "lock": {
+    "settingsTitle": "Application Password",
+    "settingsBody": "When enabled, MailDaan asks for this password after every start before the archive becomes accessible. This is an application access lock only — it does not encrypt the email archive.",
+    "passwordPlaceholder": "Application password",
+    "unlock": "Unlock",
+    "invalidPassword": "The application password is incorrect.",
+    "locked": "The application is locked. Please unlock it first.",
+    "enabled": "Protection is enabled",
+    "disabled": "Protection is disabled",
+    "enable": "Enable Password",
+    "disable": "Disable Protection",
+    "change": "Change Password",
+    "current": "Current password",
+    "newPassword": "New password",
+    "confirmPassword": "Confirm new password",
+    "mismatch": "The passwords do not match.",
+    "tooShort": "The password must be at least 8 characters.",
+    "notEnabled": "Application password protection is not enabled.",
+    "alreadyEnabled": "Application password protection is already enabled.",
+    "hint": "The enforced minimum is 8 characters, but at least 12 is recommended. Use a long, unpredictable passphrase. Avoid common passwords, repeated sequences, predictable patterns, and anything related to your email address or the application name. Specific character categories (digits, symbols) are not required — length and unpredictability matter more.",
+    "weak": "Weak",
+    "medium": "Medium",
+    "strong": "Strong",
+    "strength": "Password strength",
+    "lockedBody": "Enter the application password to access the archive.",
+    "showPassword": "Show password",
+    "hidePassword": "Hide password",
+    "save": "Save Password"
+  },
+
+  "search": {
+    "didYouMean": "Did you mean",
+    "was": "?"
+  },
+
   "theme": {
     "light": "Light",
     "dark": "Dark"

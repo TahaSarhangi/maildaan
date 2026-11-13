@@ -38,6 +38,11 @@
     <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></symbol>
     <symbol id="i-user" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></symbol>
     <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></symbol>
+    <symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M9.9 4.2A10.9 10.9 0 0 1 12 4c6.4 0 10 7 10 7a13.2 13.2 0 0 1-2.2 3"/><path d="M6.6 6.6A13.2 13.2 0 0 0 2 11s3.6 7 10 7a10.9 10.9 0 0 0 4.1-.8"/><path d="m2 2 20 20"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></symbol>
   </svg>
 
   <div id="app">
@@ -105,6 +110,31 @@
         </header>
 
         <main id="content">
+          <!-- Application lock (shown first when an app password is enabled) -->
+          <section id="screenLock" class="lock-screen hidden">
+            <div class="lock-card">
+              <svg class="lock-logo"><use href="#i-logo"/></svg>
+              <h1 class="lock-title">MailDaan</h1>
+              <p class="lock-sub" data-i18n="lock.lockedBody">Enter the application password to access the archive.</p>
+              <form id="lockForm" autocomplete="off" novalidate>
+                <div class="lock-field">
+                  <input type="password" id="lockPassword"
+                         data-i18n-ph="lock.passwordPlaceholder" placeholder="Password"
+                         autocomplete="current-password">
+                  <button type="button" class="eye-toggle" id="lockEye"
+                          data-target="lockPassword" tabindex="-1"
+                          data-i18n-title="lock.showPassword" title="Show password">
+                    <svg class="ic"><use href="#i-eye"/></svg>
+                  </button>
+                </div>
+                <div id="lockError" class="lock-error hidden" role="alert"></div>
+                <button type="submit" class="btn btn-primary lock-unlock"
+                        id="lockUnlock" data-i18n="lock.unlock">Unlock</button>
+              </form>
+              <button class="lock-exit" id="lockExit" data-i18n="nav.exit">Exit Application</button>
+            </div>
+          </section>
+
           <!-- First-run language selection -->
           <section id="screenLanguage" class="welcome-screen">
             <div class="welcome-card">
@@ -192,6 +222,7 @@
                   <button class="btn small" id="btnResetFilters" data-i18n="filters.reset">Reset</button>
                 </div>
               </div>
+              <div id="searchSuggestion" class="search-suggestion hidden"></div>
               <div class="message-list" id="messageList"></div>
               <div class="pagination" id="pagination"></div>
             </div>
@@ -224,6 +255,90 @@
 
           <!-- Settings -->
           <section id="screenSettings" class="settings-view hidden">
+            <div class="card settings-card" id="appPasswordCard">
+              <h2 class="card-title"><svg class="ic ic-title"><use href="#i-lock"/></svg>
+                <span data-i18n="lock.settingsTitle">Application Password</span></h2>
+              <p class="form-subtitle" data-i18n="lock.settingsBody">When enabled, MailDaan asks for this password after every start before the archive becomes accessible.</p>
+              <div id="lockEnabledView">
+                <p class="lock-status">
+                  <svg class="ic"><use href="#i-check"/></svg>
+                  <span data-i18n="lock.enabled">Protection is enabled</span>
+                </p>
+                <div class="form-actions">
+                  <button type="button" class="btn" id="btnChangeAppPassword"
+                          data-i18n="lock.change">Change Password</button>
+                  <button type="button" class="btn btn-danger" id="btnDisableAppPassword"
+                          data-i18n="lock.disable">Disable Protection</button>
+                </div>
+              </div>
+              <div id="lockDisabledView">
+                <p class="lock-status muted">
+                  <svg class="ic"><use href="#i-lock"/></svg>
+                  <span data-i18n="lock.disabled">Protection is disabled</span>
+                </p>
+                <div class="form-actions">
+                  <button type="button" class="btn btn-primary" id="btnEnableAppPassword"
+                          data-i18n="lock.enable">Enable Password</button>
+                </div>
+              </div>
+              <form id="appPasswordForm" class="hidden" autocomplete="off" novalidate>
+                <label class="field" id="appPwCurrentField">
+                  <span data-i18n="lock.current">Current password</span>
+                  <span class="pw-input">
+                    <input type="password" id="appPwCurrent" autocomplete="current-password">
+                    <button type="button" class="eye-toggle" data-target="appPwCurrent" tabindex="-1"
+                            data-i18n-title="lock.showPassword" title="Show password">
+                      <svg class="ic"><use href="#i-eye"/></svg>
+                    </button>
+                  </span>
+                </label>
+                <label class="field">
+                  <span data-i18n="lock.newPassword">New password</span>
+                  <span class="pw-input">
+                    <input type="password" id="appPwNew" autocomplete="new-password">
+                    <button type="button" class="eye-toggle" data-target="appPwNew" tabindex="-1"
+                            data-i18n-title="lock.showPassword" title="Show password">
+                      <svg class="ic"><use href="#i-eye"/></svg>
+                    </button>
+                  </span>
+                  <span class="pw-meter" id="pwMeter"><span></span></span>
+                  <span class="pw-meter-label" id="pwMeterLabel"></span>
+                  <span class="pw-hint" data-i18n="lock.hint">The enforced minimum is 8 characters, but at least 12 is recommended.</span>
+                </label>
+                <label class="field">
+                  <span data-i18n="lock.confirmPassword">Confirm new password</span>
+                  <span class="pw-input">
+                    <input type="password" id="appPwConfirm" autocomplete="new-password">
+                    <button type="button" class="eye-toggle" data-target="appPwConfirm" tabindex="-1"
+                            data-i18n-title="lock.showPassword" title="Show password">
+                      <svg class="ic"><use href="#i-eye"/></svg>
+                    </button>
+                  </span>
+                </label>
+                <div id="appPwError" class="form-error hidden"></div>
+                <div class="form-actions">
+                  <button type="button" class="btn" id="appPwCancel" data-i18n="common.cancel">Cancel</button>
+                  <button type="submit" class="btn btn-primary" id="appPwSubmit" data-i18n="lock.save">Save Password</button>
+                </div>
+              </form>
+              <form id="appPwDisableForm" class="hidden" autocomplete="off" novalidate>
+                <label class="field">
+                  <span data-i18n="lock.current">Current password</span>
+                  <span class="pw-input">
+                    <input type="password" id="appPwDisableCurrent" autocomplete="current-password">
+                    <button type="button" class="eye-toggle" data-target="appPwDisableCurrent" tabindex="-1"
+                            data-i18n-title="lock.showPassword" title="Show password">
+                      <svg class="ic"><use href="#i-eye"/></svg>
+                    </button>
+                  </span>
+                </label>
+                <div id="appPwDisableError" class="form-error hidden"></div>
+                <div class="form-actions">
+                  <button type="button" class="btn" id="appPwDisableCancel" data-i18n="common.cancel">Cancel</button>
+                  <button type="submit" class="btn btn-danger" data-i18n="lock.disable">Disable Protection</button>
+                </div>
+              </form>
+            </div>
             <div class="card settings-card">
               <h2 class="card-title" data-i18n="settings.appTitle">Application Settings</h2>
               <label class="field"><span data-i18n="settings.language">Interface Language</span>

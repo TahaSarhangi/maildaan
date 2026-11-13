@@ -5,7 +5,7 @@
 It connects to an IMAP account once, downloads every accessible message and attachment into a local archive (SQLite + original `.eml` files), and then lets you browse, search, filter and export your email — completely offline.
 
 - Developer: **Titanium** — https://github.com/TahaSarhangi
-- Version: 1.1.0
+- Version: 1.1.1
 - License: MIT
 
 ## Features
@@ -16,7 +16,8 @@ It connects to an IMAP account once, downloads every accessible message and atta
 - **Offline browsing** — read messages, view and save attachments, no internet connection required after the first sync.
 - **Incremental sync with recovery** — uses IMAP UID + UIDVALIDITY checkpoints. An interrupted sync resumes where it stopped; a failed batch never advances the checkpoint.
 - **Bilingual interface** — Persian (RTL, Vazirmatn font) and English (LTR), switchable at any time. First launch asks for your language.
-- **Search, filter and sort** — fast SQLite search across senders, recipients, subjects and bodies, with Persian character normalization (ی/ي, ک/ك), date and folder filters, and pagination.
+- **Search, filter and sort** — fast SQLite FTS5-backed search across senders, recipients, subjects and bodies, with Persian character normalization (ی/ي, ک/ك, diacritics, ZWNJ), keyboard-layout correction (Persian↔English), typo-tolerant "did you mean …?" suggestions, date and folder filters, and pagination.
+- **Optional application password** — protect access to MailDaan with a password (Argon2id hash, never stored in plaintext). When enabled, MailDaan asks for it after every start. This is an application access lock; it does not encrypt the archive, and there is no password reset bypass.
 - **Deduplication** — the same message stored in several folders appears once, with all folder associations preserved.
 - **Optional Excel reports** — export the current view (or the whole archive) to a formatted workbook with Messages, Contacts and Organizations sheets. Never generated automatically.
 - **Private by design** — your archive lives in `%LOCALAPPDATA%\MailDaan`, never inside the application folder, and your password is never stored.
@@ -78,15 +79,16 @@ python -m pip install -r requirements-build.txt
 build.bat
 ```
 
-This produces `dist\MailDaan\MailDaan.exe` (one-folder distribution) and `dist\MailDaan-1.1.0.zip` for GitHub Releases.
+This produces `dist\MailDaan\MailDaan.exe` (one-folder distribution) and `dist\MailDaan-1.1.1.zip` for GitHub Releases.
 
 ## Data location
 
 All user data is stored in `%LOCALAPPDATA%\MailDaan\` — completely separate from the application:
 
 - `app_settings.json` — language, theme, active account
+- `app_password.json` — Argon2id hash of the optional application password (never the plaintext password)
 - `accounts.json` — account registry (no passwords are ever stored)
-- `accounts\<id>\` — per-account independent archives (`archive.db`, `eml\`, `attachments\`)
+- `accounts\<id>\` — per-account independent archives (`archive.db` including its search index, `eml\`, `attachments\`)
 - `data\` — a MailDaan 1.0 single-account archive is adopted in place and kept untouched
 
 Upgrading from 1.0 is automatic: the existing archive is registered as the first account and continues to work without re-downloading anything.
