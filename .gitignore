@@ -33,10 +33,18 @@ desktop.ini
 .idea/
 
 # Offline installer build inputs (auto-downloaded by build-installer.ps1)
-# The Microsoft offline runtime installers are large and must never be
+# The Microsoft offline runtime redistributables are large and must never be
 # committed; the build verifies their signature and embeds them into
 # dist\MailDaan-Setup-<version>.exe.
 tools/*
 !tools/make_icon.py
 installer/prerequisites/*.exe
+installer/prerequisites/*.cab
 installer/prerequisites/manifest.json
+# Extracted WebView2 Fixed Version Runtime (from the .cab above)
+webview2_runtime/
+
+# Windows Sandbox test artifacts (sandbox-test.wsb and input\test.ps1 are kept;
+# the copied installer and all test outputs are transient)
+sandbox-share/input/MailDaan-Setup-*.exe
+sandbox-share/output/

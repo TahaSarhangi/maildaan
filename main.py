@@ -543,11 +543,16 @@ def log_startup_exception(exc):
         pass
 
 
-def show_webview2_error(lang):
-    """Last-resort dialog when the WebView2 runtime is unavailable."""
+def show_startup_error(lang):
+    """Short localized dialog when the application window cannot start.
+
+    The actual error is written to the application log by the caller; the
+    dialog never asks the user to download anything (MailDaan ships its own
+    WebView2 runtime).
+    """
     try:
         import ctypes
-        message_key = "webView2Missing"
+        message_key = "startupFailed"
         try:
             locale_path = os.path.join(config.get_ui_dir(), "locales",
                                        (lang or "en") + ".json")
@@ -556,8 +561,8 @@ def show_webview2_error(lang):
         except (OSError, ValueError):
             message = ""
         if not message:
-            message = ("MailDaan requires the Microsoft Edge WebView2 runtime. "
-                       "Download it from https://developer.microsoft.com/microsoft-edge/webview2/")
+            message = ("MailDaan could not start. The cause was recorded in "
+                       "the MailDaan log folder.")
         ctypes.windll.user32.MessageBoxW(0, message, "MailDaan", 0x10)
     except Exception:
         pass
@@ -566,9 +571,9 @@ def show_webview2_error(lang):
 def webview2_runtime_present():
     """True when the Edge WebView2 runtime binaries are actually on disk.
 
-    Windows can register the Evergreen runtime in the registry while its
-    binaries cannot be resolved (minimal images such as Windows Sandbox),
-    which leaves pywebview with a window that never renders anything.
+    Used only for diagnostics. MailDaan normally uses the Fixed Version
+    runtime bundled inside the application folder; this checks whether any
+    system-installed Evergreen runtime is also present.
     """
     pf = os.environ.get("ProgramFiles") or r"C:\Program Files"
     pf86 = os.environ.get("ProgramFiles(x86)") or r"C:\Program Files (x86)"
@@ -582,14 +587,38 @@ def webview2_runtime_present():
     return False
 
 
+def configure_webview2_runtime():
+    """Point pywebview and the WebView2 loader at the bundled runtime.
+
+    MailDaan ships the official Microsoft WebView2 Fixed Version Runtime
+    inside the application folder, so it never depends on a registered
+    system-installed Evergreen runtime. Must run before webview.start():
+    pywebview evaluates WEBVIEW2_RUNTIME_PATH once while loading its
+    Windows backend.
+    """
+    runtime_dir = config.get_webview2_runtime_dir()
+    if not runtime_dir:
+        logger.warning(
+            "bundled WebView2 Fixed Version runtime not found under %s; "
+            "falling back to any system-installed runtime",
+            os.path.join(config._packaged_base(), "webview2_runtime"))
+        return
+    # Microsoft's documented variable for the Fixed Version runtime folder.
+    os.environ.setdefault("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER", runtime_dir)
+    # pywebview's EdgeChromium backend maps this to the WinForms
+    # CoreWebView2CreationProperties.BrowserExecutableFolder.
+    webview.settings["WEBVIEW2_RUNTIME_PATH"] = runtime_dir
+    logger.info("using bundled WebView2 Fixed Version runtime: %s", runtime_dir)
+
+
 def start_frontend_watchdog(api, timeout=30):
     """Replace a silently blank window with a clear, actionable message.
 
     WebView2 can fail to initialize after the native window has already
-    opened (e.g. the runtime is registered but unusable). pywebview only
-    logs the error, leaving a white window with no UI. If the frontend has
-    not bootstrapped by `timeout` seconds, log the diagnosis and show the
-    dialog that explains how to repair the runtime.
+    opened. pywebview only logs the error, leaving a white window with no
+    UI. If the frontend has not bootstrapped by `timeout` seconds, log the
+    diagnosis (including which runtime was configured) and tell the user
+    where to find it.
     """
     def watch():
         deadline = time.monotonic() + timeout
@@ -601,11 +630,12 @@ def start_frontend_watchdog(api, timeout=30):
             return
         logger.error(
             "frontend did not bootstrap within %ss — the WebView2 runtime "
-            "is missing or failed to initialize (renderer=%s, runtime "
-            "files present=%s)",
+            "failed to initialize (renderer=%s, configured runtime=%s, "
+            "system runtime files present=%s)",
             timeout, getattr(webview, "renderer", "unknown"),
+            webview.settings.get("WEBVIEW2_RUNTIME_PATH") or "(system)",
             webview2_runtime_present())
-        show_webview2_error(api.settings.get("language"))
+        show_startup_error(api.settings.get("language"))
 
     threading.Thread(target=watch, name="maildaan-watchdog",
                      daemon=True).start()
@@ -615,7 +645,9 @@ def main():
     setup_logging()
     logger.info("MailDaan %s starting", config.APP_VERSION)
     settings = config.load_settings()
-    logger.info("webview2 runtime files present: %s",
+    configure_webview2_runtime()
+    logger.info("webview2 runtime: bundled=%s, system files present=%s",
+                webview.settings.get("WEBVIEW2_RUNTIME_PATH") or "(none)",
                 webview2_runtime_present())
 
     icon_path = os.path.join(config.get_asset_dir(), "maildaan.ico")
@@ -628,7 +660,7 @@ def main():
     index_path = os.path.join(config.get_ui_dir(), "index.html")
     if not os.path.exists(index_path):
         log_startup_exception(FileNotFoundError(index_path))
-        show_webview2_error(settings.get("language"))
+        show_startup_error(settings.get("language"))
         sys.exit(1)
 
     api = AppApi()
@@ -659,7 +691,7 @@ def main():
         webview.start(debug=False, http_server=True, icon=icon_path)
     except Exception:
         log_startup_exception(sys.exc_info()[1])
-        show_webview2_error(settings.get("language"))
+        show_startup_error(settings.get("language"))
         sys.exit(1)
 
     # Window closed — stop workers and finish cleanly.

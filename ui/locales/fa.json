@@ -236,7 +236,7 @@
     "confirmExit": "خروج از میل‌دان؟",
     "savedToFile": "ذخیره شد در:",
     "saveFailed": "ذخیره فایل امکان‌پذیر نشد.",
-    "webView2Missing": "میل‌دان به زمان اجرای Microsoft Edge WebView2 نیاز دارد که نصب نیست. لطفاً آن را از https://developer.microsoft.com/microsoft-edge/webview2/ دانلود کرده و میل‌دان را دوباره اجرا کنید.",
+    "startupFailed": "میل‌دان نتوانست پنجره خود را باز کند. دلیل آن در پوشهٔ گزارش‌های میل‌دان ثبت شده است. لطفاً میل‌دان را دوباره اجرا کنید؛ اگر مشکل ادامه داشت، آن را نصب کنید.",
     "seconds": "ثانیه",
     "messagesPerSecond": "پیام/ثانیه",
     "minutes": "دقیقه"

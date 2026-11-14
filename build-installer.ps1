@@ -5,19 +5,24 @@
     dist\MailDaan-Setup-<version>.exe
 
 .DESCRIPTION
-    1. Installs build requirements and runs PyInstaller (one-folder build).
-    2. Hygiene scan: the packaged tree must contain no user data
+    1. Obtains the official Microsoft Edge WebView2 Fixed Version Runtime
+       (x64): discovers the release currently published on Microsoft's
+       official download page, downloads its .cab and extracts it with
+       Microsoft's documented `expand` command into webview2_runtime\.
+       The runtime is bundled inside the application folder, so MailDaan
+       never depends on a system-installed Evergreen runtime and the
+       installer never asks the user to download one.
+    2. Installs build requirements and runs PyInstaller (one-folder build),
+       which embeds webview2_runtime\ next to the Python runtime.
+    3. Hygiene scan: the packaged tree must contain no user data
        (databases, .eml files, account settings, logs, credentials).
-    3. Obtains the official Microsoft offline runtime installers:
-       - Microsoft Edge WebView2 Evergreen Standalone Offline Installer (x64)
-         (mandatory: without it the installer is not "fully offline").
-       - Microsoft .NET Framework 4.6.2 offline redistributable (optional:
-         every supported Windows 10/11 already ships .NET Framework 4.7.2+).
-       Each file is verified by Authenticode signature (Microsoft
-       Corporation), file metadata, and its SHA-256 is recorded.
-    4. Locates (or installs) Inno Setup and compiles installer\maildaan.iss,
-       embedding the PyInstaller output and the offline installers.
-    5. Verifies the produced setup executable and its file manifest.
+    4. Obtains the official Microsoft .NET Framework 4.6.2 offline
+       redistributable (optional: every supported Windows 10/11 already
+       ships .NET Framework 4.7.2+). It is verified by Authenticode
+       signature (Microsoft Corporation), and its SHA-256 is recorded.
+    5. Locates (or installs) Inno Setup and compiles installer\maildaan.iss,
+       embedding the PyInstaller output and the offline .NET installer.
+    6. Verifies the produced setup executable and its file manifest.
 
 .PARAMETER SkipPyInstaller
     Reuse the existing dist\MailDaan build instead of running PyInstaller.
@@ -41,10 +46,13 @@ Set-Location -LiteralPath $repoRoot
 $dist = Join-Path $repoRoot 'dist'
 $appDist = Join-Path $dist 'MailDaan'
 $prereqDir = Join-Path $repoRoot 'installer\prerequisites'
+$runtimeSrc = Join-Path $repoRoot 'webview2_runtime'
 $toolsDir = Join-Path $repoRoot 'tools'
 
 # --- Official, stable Microsoft distribution points ------------------------
-$WebView2OfflineUrl = 'https://go.microsoft.com/fwlink/?linkid=2124701'   # Evergreen Standalone Offline Installer (x64)
+# The Fixed Version Runtime release currently published on Microsoft's own
+# WebView2 download page (the page embeds the direct .cab links).
+$WebView2DownloadPage = 'https://developer.microsoft.com/en-us/Microsoft-edge/webview2/'
 $DotNetOfflineUrls = @(
     'https://download.microsoft.com/download/F/E/9/FE9127ED-7E83-4B1B-9E8B-7B6F7A8E1E94/NDP462-KB3151800-x86-x64-AllOS-ENU.exe',
     'https://dotnet.microsoft.com/en-us/download/dotnet-framework/thank-you/net462-offline-installer'
@@ -118,7 +126,72 @@ $outputName = "MailDaan-Setup-$version.exe"
 Log-Step "MailDaan $version - fully offline installer build"
 
 # ---------------------------------------------------------------------------
-# 1. PyInstaller one-folder build
+# 1. Microsoft Edge WebView2 Fixed Version Runtime (x64)
+# ---------------------------------------------------------------------------
+Log-Step "Discovering the official WebView2 Fixed Version Runtime (x64)"
+$page = (Invoke-WebRequest -Uri $WebView2DownloadPage -UseBasicParsing).Content -replace '\\u002F', '/'
+$fixedMatch = [regex]::Match($page, 'https://msedge\.sf\.dl\.delivery\.mp\.microsoft\.com/filestreamingservice/files/([0-9a-z-]+)/Microsoft\.WebView2\.FixedVersionRuntime\.([0-9.]+)\.x64\.cab')
+if (-not $fixedMatch.Success) {
+    Fail "Could not find the official WebView2 Fixed Version Runtime (x64) download link on $WebView2DownloadPage . A fully offline installer cannot be produced without it."
+}
+$wvFixedVersion = $fixedMatch.Groups[2].Value
+$wvCabUrl = $fixedMatch.Value
+$wvCabName = "Microsoft.WebView2.FixedVersionRuntime.$wvFixedVersion.x64.cab"
+$wvRuntimeDirName = "Microsoft.WebView2.FixedVersionRuntime.$wvFixedVersion.x64"
+$wvCabPath = Join-Path $prereqDir $wvCabName
+$wvRuntimePath = Join-Path $runtimeSrc $wvRuntimeDirName
+Log-Ok "Microsoft publishes Fixed Version Runtime $wvFixedVersion (x64)"
+
+# A leftover Evergreen Standalone Installer is no longer embedded; drop it so
+# the prerequisites folder cannot keep a stale duplicate runtime payload.
+$evergreen = Join-Path $prereqDir 'MicrosoftEdgeWebView2RuntimeInstallerX64.exe'
+if (Test-Path -LiteralPath $evergreen) {
+    Remove-Item -LiteralPath $evergreen -Force
+    Log-Ok "removed the obsolete Evergreen Standalone Installer (no longer embedded)"
+}
+
+$wvNeeded = -not (Test-Path -LiteralPath $wvCabPath)
+if (-not $wvNeeded) {
+    try {
+        $null = Verify-AuthenticodeMicrosoft $wvCabPath 'WebView2 Fixed Version Runtime cabinet'
+    } catch {
+        Log-Warn "existing file failed verification: $_"
+        $wvNeeded = $true
+    }
+}
+if ($wvNeeded) {
+    try {
+        Download-File $wvCabUrl $wvCabPath 'WebView2 Fixed Version Runtime (x64)'
+        $null = Verify-AuthenticodeMicrosoft $wvCabPath 'WebView2 Fixed Version Runtime cabinet'
+    } catch {
+        Fail "Could not obtain the official Microsoft WebView2 Fixed Version Runtime during the build: $_  A fully offline installer cannot be produced without it."
+    }
+}
+$wvSha = (Get-FileHash -LiteralPath $wvCabPath -Algorithm SHA256).Hash
+Log-Ok "WebView2 Fixed Version Runtime cabinet verified (SHA-256 $wvSha)"
+
+# Extract with Microsoft's documented method (`expand <cab> -F:* <dest>`),
+# preserving the original directory structure. Reuse an existing extraction
+# of exactly this version; any other runtime folder is removed first.
+if (-not (Test-Path -LiteralPath (Join-Path $wvRuntimePath 'msedgewebview2.exe'))) {
+    if (Test-Path -LiteralPath $runtimeSrc) {
+        Remove-Item -LiteralPath $runtimeSrc -Recurse -Force
+    }
+    New-Item -ItemType Directory -Force -Path $runtimeSrc | Out-Null
+    & expand $wvCabPath -F:* $runtimeSrc | Out-Null
+    if ($LASTEXITCODE -ne 0) { Fail "Extracting the WebView2 Fixed Version Runtime failed (expand exit code $LASTEXITCODE)." }
+    if (-not (Test-Path -LiteralPath (Join-Path $wvRuntimePath 'msedgewebview2.exe'))) {
+        Fail "The extracted WebView2 Fixed Version Runtime does not contain msedgewebview2.exe."
+    }
+    Log-Ok "runtime extracted to webview2_runtime\$wvRuntimeDirName"
+} else {
+    Log-Ok "reusing existing extraction webview2_runtime\$wvRuntimeDirName"
+}
+$runtimeFiles = @(Get-ChildItem -LiteralPath $wvRuntimePath -Recurse -File)
+Log-Ok "runtime contains $($runtimeFiles.Count) files ($([math]::Round((($runtimeFiles | Measure-Object -Property Length -Sum).Sum) / 1MB, 1)) MB)"
+
+# ---------------------------------------------------------------------------
+# 2. PyInstaller one-folder build
 # ---------------------------------------------------------------------------
 if (-not $SkipRequirements) {
     Log-Step "Installing build requirements"
@@ -135,7 +208,7 @@ if (-not $SkipPyInstaller) {
 }
 
 # ---------------------------------------------------------------------------
-# 2. Hygiene scan: no user data may ever be packaged
+# 3. Hygiene scan: no user data may ever be packaged
 # ---------------------------------------------------------------------------
 Log-Step "Hygiene scan of the packaged application tree"
 $forbiddenFiles = @('app_settings.json', 'accounts.json', 'app_password.json', 'settings.json',
@@ -176,46 +249,17 @@ foreach ($rel in $required) {
 }
 $pythonDll = Get-ChildItem -LiteralPath (Join-Path $appDist '_internal') -Filter 'python3*.dll' -ErrorAction SilentlyContinue
 if (-not $pythonDll) { Fail "missing the Python runtime DLL in the build." }
-Log-Ok "all required application assets present"
+$requiredRuntime = Join-Path $appDist "_internal\webview2_runtime\$wvRuntimeDirName\msedgewebview2.exe"
+if (-not (Test-Path -LiteralPath $requiredRuntime)) { Fail "the bundled WebView2 Fixed Version Runtime is missing from the build: _internal\webview2_runtime\$wvRuntimeDirName" }
+Log-Ok "all required application assets present (including the bundled WebView2 runtime)"
 
 # ---------------------------------------------------------------------------
-# 3. Offline runtime prerequisites
+# 4. Optional offline .NET Framework redistributable
 # ---------------------------------------------------------------------------
 New-Item -ItemType Directory -Force -Path $prereqDir | Out-Null
-$webview2 = Join-Path $prereqDir 'MicrosoftEdgeWebView2RuntimeInstallerX64.exe'
 $dotnet = Join-Path $prereqDir 'NDP462-KB3151800-x86-x64-AllOS-ENU.exe'
 $dotnetAvailable = $false
 $manifest = [ordered]@{ }
-
-Log-Step "Verifying the Microsoft Edge WebView2 Evergreen Standalone Offline Installer (x64)"
-$wvNeeded = -not (Test-Path -LiteralPath $webview2)
-if (-not $wvNeeded) {
-    try {
-        $null = Verify-AuthenticodeMicrosoft $webview2 'WebView2 offline installer'
-        $null = Verify-FileMetadata $webview2 'WebView2 offline installer' 'Microsoft Edge'
-    } catch {
-        Log-Warn "existing file failed verification: $_"
-        $wvNeeded = $true
-    }
-}
-if ($wvNeeded) {
-    try {
-        Download-File $WebView2OfflineUrl $webview2 'Microsoft Edge WebView2 offline installer (x64)'
-        $null = Verify-AuthenticodeMicrosoft $webview2 'WebView2 offline installer'
-        $null = Verify-FileMetadata $webview2 'WebView2 offline installer' 'Microsoft Edge'
-    } catch {
-        Fail "Could not obtain the official Microsoft Edge WebView2 offline installer during the build: $_  A fully offline installer cannot be produced without it."
-    }
-}$wvSha = (Get-FileHash -LiteralPath $webview2 -Algorithm SHA256).Hash
-$wvi = Get-FileVersionInfo $webview2
-Log-Ok "Microsoft Edge WebView2 offline installer verified (SHA-256 $wvSha; $($wvi.FileDescription))"
-$manifest['webview2'] = [ordered]@{
-    file = 'MicrosoftEdgeWebView2RuntimeInstallerX64.exe'
-    source = $WebView2OfflineUrl
-    sha256 = $wvSha
-    version = "$($wvi.ProductVersion) / file $($wvi.FileVersion)"
-    bytes = (Get-Item -LiteralPath $webview2).Length
-}
 
 Log-Step "Checking for the Microsoft .NET Framework 4.6.2 offline redistributable"
 if (Test-Path -LiteralPath $dotnet) {
@@ -261,10 +305,19 @@ if ($dotnetAvailable) {
     Log-Warn "clear error if it is ever missing. Place NDP462-KB3151800-x86-x64-AllOS-ENU.exe"
     Log-Warn "in installer\prerequisites\ to embed it as well."
 }
+$manifest['webview2FixedVersion'] = [ordered]@{
+    runtimeVersion = $wvFixedVersion
+    architecture = 'x64'
+    cabFile = $wvCabName
+    source = $wvCabUrl
+    sha256 = $wvSha
+    bytes = (Get-Item -LiteralPath $wvCabPath).Length
+    extractedFiles = $runtimeFiles.Count
+}
 $manifest | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $prereqDir 'manifest.json') -Encoding UTF8
 
 # ---------------------------------------------------------------------------
-# 4. Inno Setup compiler
+# 5. Inno Setup compiler
 # ---------------------------------------------------------------------------
 $innoVersion = '6.7.4'
 $iscc = Join-Path $toolsDir "innosetup-$innoVersion\ISCC.exe"
@@ -289,10 +342,10 @@ if (-not (Test-Path -LiteralPath $iscc)) {
 }
 
 # ---------------------------------------------------------------------------
-# 5. Compile the setup executable
+# 6. Compile the setup executable
 # ---------------------------------------------------------------------------
 Log-Step "Compiling the offline installer with Inno Setup"
-$isccArgs = @("/DMyAppVersion=$version", "/DWebView2Sha256=$wvSha", "/DDotNetSha256=$dnSha", 'installer\maildaan.iss')
+$isccArgs = @("/DMyAppVersion=$version", "/DWebView2FixedVersion=$wvFixedVersion", "/DDotNetSha256=$dnSha", 'installer\maildaan.iss')
 & $iscc @isccArgs
 if ($LASTEXITCODE -ne 0) { Fail "Inno Setup compilation failed (exit code $LASTEXITCODE)." }
 
@@ -303,7 +356,7 @@ $len = (Get-Item -LiteralPath $setup).Length
 "$sha *$outputName" | Set-Content -LiteralPath (Join-Path $dist "$outputName.sha256") -Encoding ASCII
 
 # ---------------------------------------------------------------------------
-# 6. Verify what was actually embedded
+# 7. Verify what was actually embedded
 # ---------------------------------------------------------------------------
 Log-Step "Verifying the compiled installer contents"
 $manifestFile = Get-ChildItem -LiteralPath $dist -Filter "MailDaan-Setup-$version.manifest" -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -312,11 +365,17 @@ if ($manifestFile) {
     $embeddedForbidden = @('app_settings.json', 'accounts.json', 'app_password.json') | Where-Object { $mText -match [regex]::Escape($_) }
     if ($embeddedForbidden) { Fail "the compiled installer embeds user data files: $($embeddedForbidden -join ', ')" }
     Log-Ok "setup manifest contains no user data files"
-    if ($mText -notmatch [regex]::Escape('MicrosoftEdgeWebView2RuntimeInstallerX64.exe')) {
-        Fail "the compiled installer does not embed the WebView2 offline installer."
+    if ($mText -match [regex]::Escape('MicrosoftEdgeWebView2RuntimeInstallerX64.exe')) {
+        Fail "the compiled installer still embeds the obsolete Evergreen Standalone Installer."
     }
-    Log-Ok "WebView2 offline installer is embedded"
-    if ($mText -notmatch 'msedgewebview|WebView2Loader') {
+    if ($mText -notmatch [regex]::Escape("webview2_runtime\$wvRuntimeDirName")) {
+        Fail "the compiled installer does not embed the WebView2 Fixed Version Runtime ($wvRuntimeDirName)."
+    }
+    if ($mText -notmatch 'msedgewebview2\.exe') {
+        Fail "the compiled installer does not contain msedgewebview2.exe."
+    }
+    Log-Ok "WebView2 Fixed Version Runtime $wvFixedVersion is embedded (no Evergreen payload)"
+    if ($mText -notmatch 'WebView2Loader') {
         Log-Warn "manifest unexpectedly shows no WebView2 loader files"
     }
     Log-Ok "MailDaan.exe, Python runtime and UI assets embedded"

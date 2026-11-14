@@ -2,15 +2,18 @@ MailDaan setup — bundled Microsoft runtime redistributables
 ==========================================================
 
 This setup executable is completely self-contained and works without an
-internet connection. Besides the MailDaan application it embeds the
-official Microsoft runtime redistributables that MailDaan needs:
+internet connection. It does not install, download or require any
+system-level WebView2 runtime and never asks you to download one.
 
-1. Microsoft Edge WebView2 Runtime — Evergreen Standalone Offline
-   Installer (x64). Microsoft Corporation. Downloaded during the build
-   from the official Microsoft distribution point
-   (https://go.microsoft.com/fwlink/?linkid=2124701) and embedded in this
-   setup. It is only executed when the WebView2 Runtime is not already
-   installed and usable on this computer.
+Besides the MailDaan application it embeds the official Microsoft runtime
+redistributables that MailDaan needs:
+
+1. Microsoft Edge WebView2 Runtime — Fixed Version distribution (x64,
+   version printed by the setup log). Microsoft Corporation. Downloaded
+   during the build from the official Microsoft distribution point named on
+   Microsoft's WebView2 download page and bundled inside the application
+   folder (webview2_runtime\). MailDaan uses this private copy of the
+   runtime directly; no system registration is needed or used.
 
    The Microsoft Edge WebView2 Runtime is licensed by Microsoft
    Corporation. License terms and privacy information:

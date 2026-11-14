@@ -5,9 +5,11 @@
 ;   * the complete PyInstaller one-folder distribution of MailDaan
 ;     (Python runtime, all DLLs/modules/native dependencies, HTML/CSS/JS,
 ;     icons, localization files and the bundled Vazirmatn fonts),
-;   * the official Microsoft Edge WebView2 Evergreen Standalone Offline
-;     Installer (x64), executed from the setup's temporary extraction
-;     directory when the runtime is missing,
+;   * the official Microsoft Edge WebView2 Fixed Version Runtime (x64),
+;     bundled inside the application folder (webview2_runtime\). MailDaan
+;     uses this private runtime instead of any system-installed WebView2
+;     runtime, so setup never installs, downloads or requires the Evergreen
+;     runtime and never asks the user to download anything,
 ;   * (optionally) the official Microsoft .NET Framework offline
 ;     redistributable, used only when .NET Framework 4.6.2+ is absent.
 ;
@@ -24,21 +26,21 @@
 #endif
 
 #define AppIdGuid "{{F8FF4FD1-7339-4E20-B086-F2E1D3428142}"
-#define WebView2InstallerName "MicrosoftEdgeWebView2RuntimeInstallerX64.exe"
+#ifndef WebView2FixedVersion
+  #define WebView2FixedVersion "157.0.4341.60"
+#endif
+#define WebView2RuntimeDirName "Microsoft.WebView2.FixedVersionRuntime." + WebView2FixedVersion + ".x64"
 #define DotNetInstallerName "NDP462-KB3151800-x86-x64-AllOS-ENU.exe"
 
-#ifexist "prerequisites\" + WebView2InstallerName
+#ifexist "..\dist\MailDaan\_internal\webview2_runtime\" + WebView2RuntimeDirName + "\msedgewebview2.exe"
 #else
-  #error The Microsoft Edge WebView2 Evergreen Standalone Offline Installer (x64) is missing from the prerequisites folder. Run build-installer.bat to download it during the build. A fully offline installer cannot be produced without it.
+  #error The Microsoft Edge WebView2 Fixed Version Runtime (x64) is missing from the build. Run build-installer.bat to download and extract it during the build. A fully offline installer cannot be produced without it.
 #endif
 
 #ifexist "prerequisites\" + DotNetInstallerName
   #define HasDotNetInstaller
 #endif
 
-#ifndef WebView2Sha256
-  #define WebView2Sha256 ""
-#endif
 #ifndef DotNetSha256
   #define DotNetSha256 ""
 #endif
@@ -77,8 +79,8 @@ InfoBeforeFile=PREREQUISITES.txt
 
 ; ---- Architecture: 64-bit Windows only -------------------------------------
 ; 'x64os' rejects x86 and ARM64 Windows: MailDaan bundles native x64
-; binaries (Python, pythonnet, WebView2Loader) that are not verified on
-; any other architecture.
+; binaries (Python, pythonnet, WebView2Loader, the Fixed Version Runtime)
+; that are not verified on any other architecture.
 ArchitecturesAllowed=x64os
 ArchitecturesInstallIn64BitMode=x64os
 ; Windows 10 1809 is the oldest build that is both still supported and
@@ -87,9 +89,9 @@ ArchitecturesInstallIn64BitMode=x64os
 MinVersion=10.0.17763
 
 ; ---- Privileges ------------------------------------------------------------
-; MailDaan installs per-machine into Program Files and, when a runtime is
-; missing, installs the Microsoft WebView2/.NET machine-wide runtimes,
-; which genuinely require elevation. One single UAC prompt at the start
+; MailDaan installs per-machine into Program Files and, when the .NET
+; Framework is missing, may install that machine-wide runtime, which
+; genuinely requires elevation. One single UAC prompt at the start
 ; therefore covers everything; prerequisites are never re-elevated.
 PrivilegesRequired=admin
 ; The only per-user area touched is %LOCALAPPDATA%\MailDaan: its directories
@@ -125,13 +127,14 @@ Name: "{localappdata}\MailDaan\logs"; Flags: uninsneveruninstall
 
 [Files]
 ; ---- The application (PyInstaller one-folder distribution) ----------------
+; This includes the bundled WebView2 Fixed Version Runtime under
+; _internal\webview2_runtime\.
 Source: "..\dist\MailDaan\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; ---- Attribution -----------------------------------------------------------
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\third-party-licenses\*"; DestDir: "{app}\third-party-licenses"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "PREREQUISITES.txt"; DestDir: "{app}"; Flags: ignoreversion
-; ---- Embedded offline runtime installers (never installed as files) --------
-Source: "prerequisites\{#WebView2InstallerName}"; Flags: dontcopy
+; ---- Embedded offline .NET installer (never installed as a file) -----------
 #ifdef HasDotNetInstaller
 Source: "prerequisites\{#DotNetInstallerName}"; Flags: dontcopy
 #endif
@@ -158,12 +161,9 @@ Filename: "{app}\MailDaan.exe"; Description: "{cm:LaunchProgram,MailDaan}"; Flag
 
 [Code]
 const
-  // Microsoft Edge WebView2 Evergreen runtime (EdgeUpdate client id)
-  WebView2ClientId = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}';
-  WebView2InstallerName = '{#WebView2InstallerName}';
-  WebView2ExpectedSha256 = '{#WebView2Sha256}';
   DotNetInstallerName = '{#DotNetInstallerName}';
   DotNetExpectedSha256 = '{#DotNetSha256}';
+  WebView2RuntimeDirName = '{#WebView2RuntimeDirName}';
 #ifdef HasDotNetInstaller
   DotNetInstallerBundled = True;
 #else
@@ -183,81 +183,6 @@ var
 function DotNetIsSupported: Boolean;
 begin
   Result := IsDotNetInstalled(net462, 0);
-end;
-
-// ---------------------------------------------------------------------------
-// Detection: Microsoft Edge WebView2 Runtime (per Microsoft's documented
-// registry detection across HKLM (32-bit and 64-bit views) and HKCU)
-// ---------------------------------------------------------------------------
-
-function WebView2RegistryVersion(var Version: string): Boolean;
-var
-  Found: Boolean;
-  Key: string;
-begin
-  Key := 'SOFTWARE\Microsoft\EdgeUpdate\Clients\' + WebView2ClientId;
-  Found := False;
-  Version := '';
-  if not Found then
-    Found := RegQueryStringValue(HKLM32, Key, 'pv', Version);
-  if not Found then
-    Found := RegQueryStringValue(HKLM, Key, 'pv', Version);
-  if not Found then
-    Found := RegQueryStringValue(HKCU, Key, 'pv', Version);
-  Result := Found and (Version <> '') and (Version <> '0.0.0.0');
-end;
-
-// Defense in depth: locate msedgewebview2.exe in the well-known Evergreen
-// install locations, in case the registry entry is missing or stale.
-
-function WebView2RuntimeFileExists: Boolean;
-var
-  Bases: array of string;
-  Base, ExePath: string;
-  FindRec: TFindRec;
-  I: Integer;
-begin
-  Result := False;
-  SetArrayLength(Bases, 3);
-  Bases[0] := ExpandConstant('{pf}');
-  Bases[1] := ExpandConstant('{pf32}');
-  Bases[2] := ExpandConstant('{localappdata}');
-  for I := 0 to GetArrayLength(Bases) - 1 do
-  begin
-    Base := Bases[I] + '\Microsoft\EdgeWebView\Application';
-    if FindFirst(Base + '\*', FindRec) then
-    begin
-      try
-        repeat
-          if (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0 then
-          begin
-            ExePath := Base + '\' + FindRec.Name + '\msedgewebview2.exe';
-            if FileExists(ExePath) then
-            begin
-              Result := True;
-              Exit;
-            end;
-          end;
-        until not FindNext(FindRec);
-      finally
-        FindClose(FindRec);
-      end;
-    end;
-  end;
-end;
-
-function WebView2IsInstalled: Boolean;
-var
-  Version: string;
-begin
-  // The registry entry alone is NOT sufficient: minimal Windows images
-  // (notably Windows Sandbox) register the Evergreen runtime while its
-  // binaries cannot actually be resolved. WebView2 environment creation
-  // then fails with "Package dependency criteria could not be resolved"
-  // and pywebview renders a blank window. Require the registration AND
-  // the runtime binaries on disk; otherwise the embedded offline runtime
-  // installer is run below to install a genuinely usable runtime.
-  Result := WebView2RegistryVersion(Version) and WebView2RuntimeFileExists;
 end;
 
 // ---------------------------------------------------------------------------
@@ -291,10 +216,10 @@ begin
 end;
 
 // ---------------------------------------------------------------------------
-// PrepareToInstall: run the embedded offline runtime installers — from the
-// setup's temporary extraction directory — only for runtimes that are
-// missing. Everything happens before any MailDaan file is installed, so a
-// failed prerequisite never leaves a half-installed application behind.
+// PrepareToInstall: run the embedded offline .NET Framework installer — from
+// the setup's temporary extraction directory — only when it is missing.
+// Everything happens before any MailDaan file is installed, so a failed
+// prerequisite never leaves a half-installed application behind.
 // ---------------------------------------------------------------------------
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
@@ -311,7 +236,7 @@ begin
   ProgressPage.SetProgress(0, 1);
   ProgressPage.Show;
   try
-    // ---- 1) Microsoft .NET Framework 4.6.2+ -------------------------------
+    // ---- Microsoft .NET Framework 4.6.2+ ----------------------------------
     if not DotNetIsSupported then
     begin
       if not DotNetInstallerBundled then
@@ -348,36 +273,40 @@ begin
         Exit;
       end;
     end;
-
-    // ---- 2) Microsoft Edge WebView2 Runtime -------------------------------
-    if not WebView2IsInstalled then
-    begin
-      ExtractTemporaryFile(WebView2InstallerName);
-      PrereqPath := ExpandConstant('{tmp}\') + WebView2InstallerName;
-      if not PrerequisiteIsIntact(PrereqPath, WebView2ExpectedSha256) then
-      begin
-        Result := 'The embedded Microsoft Edge WebView2 offline installer is corrupted or has been tampered with. Setup cannot continue.';
-        Exit;
-      end;
-      ProgressPage.SetText('Installing the Microsoft Edge WebView2 runtime...', 'This may take a few minutes');
-      ProgressPage.SetProgress(0, 1);
-      if (not RunPrerequisiteInstaller(PrereqPath, '/silent /install', ExitCode)) or
-         not ((ExitCode = 0) or (ExitCode = 3010)) then
-      begin
-        Result := InstallerResultMessage('the Microsoft Edge WebView2 runtime', ExitCode);
-        Exit;
-      end;
-      if ExitCode = 3010 then
-        RestartNeeded := True;
-      if not WebView2IsInstalled then
-      begin
-        Result := 'The Microsoft Edge WebView2 runtime was installed but is still not available. Please restart Windows and run this setup again.';
-        Exit;
-      end;
-    end;
   finally
     ProgressPage.Hide;
   end;
+end;
+
+// ---------------------------------------------------------------------------
+// CurStepChanged: after the files are installed, apply the directory
+// permissions Microsoft requires for the Fixed Version WebView2 Runtime on
+// Windows 10 (runtime 120 and newer): the renderer process runs inside an
+// App Container, so 'ALL APPLICATION PACKAGES' and 'ALL RESTRICTED
+// APPLICATION PACKAGES' must be able to read and execute the runtime files.
+// ---------------------------------------------------------------------------
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  RuntimePath, Sid: string;
+  ResultCode: Integer;
+begin
+  if CurStep <> ssPostInstall then
+    Exit;
+
+  RuntimePath := ExpandConstant('{app}\_internal\webview2_runtime\') + WebView2RuntimeDirName;
+  if not DirExists(RuntimePath) then
+    Exit;
+
+  Sid := '*S-1-15-2-2'; // ALL APPLICATION PACKAGES
+  if (not Exec(ExpandConstant('{sys}\icacls.exe'), '"' + RuntimePath + '" /grant ' + Sid + ':(OI)(CI)(RX)', '',
+               SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
+    Log('MailDaan setup: icacls failed for ' + Sid + ' on the bundled WebView2 runtime (exit code ' + IntToStr(ResultCode) + ')');
+
+  Sid := '*S-1-15-2-1'; // ALL RESTRICTED APPLICATION PACKAGES
+  if (not Exec(ExpandConstant('{sys}\icacls.exe'), '"' + RuntimePath + '" /grant ' + Sid + ':(OI)(CI)(RX)', '',
+               SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
+    Log('MailDaan setup: icacls failed for ' + Sid + ' on the bundled WebView2 runtime (exit code ' + IntToStr(ResultCode) + ')');
 end;
 
 function NeedRestart: Boolean;
@@ -398,8 +327,10 @@ end;
 function InitializeSetup: Boolean;
 begin
   // Single sanity log line for support purposes; the real prerequisite work
-  // happens in PrepareToInstall above.
+  // happens in PrepareToInstall above. The WebView2 Fixed Version Runtime is
+  // bundled with the application and needs no system-level installation.
   Log('MailDaan setup: .NET Framework 4.6.2+ present=' + BoolStr(DotNetIsSupported) +
-      ', WebView2 runtime present=' + BoolStr(WebView2IsInstalled));
+      ', bundled WebView2 runtime=' + WebView2RuntimeDirName);
   Result := True;
 end;
+

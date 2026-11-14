@@ -1,7 +1,15 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
+
 from PyInstaller.utils.hooks import collect_all
 
 datas = [('ui', 'ui'), ('assets', 'assets')]
+# The Microsoft WebView2 Fixed Version Runtime (x64), extracted by
+# build-installer.ps1 into webview2_runtime\. Optional so that plain
+# development builds still work when the runtime has not been downloaded.
+runtime_root = os.path.join(SPECPATH, 'webview2_runtime')
+if os.path.isdir(runtime_root):
+    datas.append(('webview2_runtime', 'webview2_runtime'))
 binaries = []
 hiddenimports = []
 tmp_ret = collect_all('webview')

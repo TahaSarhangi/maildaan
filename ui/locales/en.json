@@ -236,7 +236,7 @@
     "confirmExit": "Exit MailDaan?",
     "savedToFile": "Saved to:",
     "saveFailed": "Could not save the file.",
-    "webView2Missing": "MailDaan needs the Microsoft Edge WebView2 runtime, which is not installed. Please download it from https://developer.microsoft.com/microsoft-edge/webview2/ and start MailDaan again.",
+    "startupFailed": "MailDaan could not start its window. The cause was recorded in the MailDaan log folder. Please restart MailDaan; if the problem persists, reinstall it.",
     "seconds": "s",
     "messagesPerSecond": "msg/s",
     "minutes": "min"

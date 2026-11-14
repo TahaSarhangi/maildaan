@@ -113,3 +113,25 @@ def get_ui_dir() -> str:
 
 def get_asset_dir() -> str:
     return os.path.join(_packaged_base(), "assets")
+
+
+def get_webview2_runtime_dir():
+    """Return the bundled Fixed Version WebView2 runtime directory or None.
+
+    The runtime ships inside the application folder (never with user data)
+    as 'webview2_runtime\\Microsoft.WebView2.FixedVersionRuntime.<ver>.x64'
+    with msedgewebview2.exe at its root. When it is absent — for example when
+    running straight from source — None is returned and the system-installed
+    WebView2 runtime is used instead.
+    """
+    root = os.path.join(_packaged_base(), "webview2_runtime")
+    if not os.path.isdir(root):
+        return None
+    try:
+        for name in sorted(os.listdir(root)):
+            candidate = os.path.join(root, name)
+            if os.path.exists(os.path.join(candidate, "msedgewebview2.exe")):
+                return candidate
+    except OSError:
+        pass
+    return None
