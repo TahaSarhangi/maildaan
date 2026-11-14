@@ -114,6 +114,7 @@
 
   "sync": {
     "title": "همگام‌سازی",
+    "statusTitle": "وضعیت",
     "start": "شروع همگام‌سازی",
     "backToArchive": "بازگشت به آرشیو",
     "ready": "آماده",

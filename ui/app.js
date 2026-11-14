@@ -31,6 +31,7 @@ const state = {
   appPwMode: "enable",         // 'enable' | 'change'
   languageChosen: false,
   searchSeq: 0,
+  openMessageId: null,
 };
 
 /* ------------------------------------------------------------------ helpers */
@@ -61,8 +62,41 @@ function t(path, fallback) {
   return node;
 }
 
+function parseUtcDate(value) {
+  // storage.py keeps email dates as 'YYYY-MM-DD HH:MM:SS' in UTC; make the
+  // offset explicit so the string is never read as local time.
+  const s = String(value).trim().replace(" ", "T");
+  const date = new Date(/[Zz]|[+-]\d{2}:?\d{2}$/.test(s) ? s : s + "Z");
+  return isNaN(date.getTime()) ? null : date;
+}
+
+let _dateFormatter = null;
+let _dateFormatterLang = null;
+
 function formatDate(value) {
-  return value ? toDigits(value) : "—";
+  if (!value) return "—";
+  const date = parseUtcDate(value);
+  if (!date) return toDigits(value);   // unknown format: show the raw value
+  try {
+    if (_dateFormatterLang !== state.lang) {
+      _dateFormatterLang = state.lang;
+      _dateFormatter = state.lang === "fa"
+        ? new Intl.DateTimeFormat("fa-IR", {
+            calendar: "persian", numberingSystem: "arabext",
+            year: "numeric", month: "long", day: "numeric",
+            hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC",
+          })
+        : new Intl.DateTimeFormat("en-CA", {
+            calendar: "gregory", numberingSystem: "latn",
+            year: "numeric", month: "2-digit", day: "2-digit",
+            hour: "2-digit", minute: "2-digit", second: "2-digit",
+            hour12: false, timeZone: "UTC",
+          });
+    }
+    return _dateFormatter.format(date);
+  } catch (e) {
+    return toDigits(value);
+  }
 }
 
 function formatDuration(seconds) {
@@ -172,7 +206,12 @@ async function applyLanguage(lang) {
   updateThemeButton();
   updateLangButton();
   renderAccounts();
-  if (state.view === "archive") { loadFolders(); loadMessages(); }
+  if (state.view === "archive") {
+    loadFolders();
+    loadMessages();
+    // Re-render an already-open message so its date follows the new calendar.
+    if (state.openMessageId != null) openMessage(state.openMessageId);
+  }
   if (state.view === "sync") renderSyncScreen();
   if (state.view === "settings") loadSettingsForms();
   updateTopbar();
@@ -566,12 +605,14 @@ function renderPagination() {
 /* ------------------------------------------------------------- message detail */
 
 function renderDetailEmpty() {
+  state.openMessageId = null;
   $("detailEmpty").classList.remove("hidden");
   $("detailContent").classList.add("hidden");
   $("detailContent").innerHTML = "";
 }
 
 async function openMessage(id) {
+  state.openMessageId = id;
   const m = await api().getMessage(id);
   if (!m) { infoModal(t("common.error", "Error"), t("viewer.notFound", "Message not found.")); return; }
   const subject = m.subject || t("viewer.noSubject", "(No subject)");
@@ -586,7 +627,7 @@ async function openMessage(id) {
     const group = (m.recipients || []).filter((r) => r.rtype === kind);
     if (group.length) addRow(label, group.map((r) => (r.name ? r.name + " " : "") + "<" + r.email + ">").join("; "));
   });
-  addRow(t("viewer.date", "Date"), m.date_utc);
+  addRow(t("viewer.date", "Date"), formatDate(m.date_utc));
   addRow(t("viewer.folders", "Folders"), m.folder_names);
 
   let bodyHtml = "";

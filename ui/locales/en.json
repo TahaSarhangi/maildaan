@@ -114,6 +114,7 @@
 
   "sync": {
     "title": "Synchronization",
+    "statusTitle": "Status",
     "start": "Start Synchronization",
     "backToArchive": "Back to Archive",
     "ready": "Ready",

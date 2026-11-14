@@ -5,7 +5,7 @@
 It connects to an IMAP account once, downloads every accessible message and attachment into a local archive (SQLite + original `.eml` files), and then lets you browse, search, filter and export your email — completely offline.
 
 - Developer: **Titanium** — https://github.com/TahaSarhangi
-- Version: 1.1.2
+- Version: 1.1.3
 - License: MIT
 
 ## Features
@@ -25,23 +25,22 @@ It connects to an IMAP account once, downloads every accessible message and atta
 ## Windows requirements
 
 - Windows 10 (version 1809 or later) or Windows 11, **64-bit (x64)**
-- Microsoft Edge WebView2 runtime — not needed as a separate download: the offline
-  installer embeds the official Microsoft Edge WebView2 Evergreen Standalone Offline
-  Installer (x64) and installs it automatically if the runtime is missing
+- No WebView2 download needed: the offline installer embeds the official Microsoft
+  Edge WebView2 **Fixed Version Runtime (x64)** and uses that private copy, so setup
+  never installs, downloads or asks for a system WebView2 runtime
 - The .NET Framework 4.6.2 runtime used by the embedded pywebview/pythonnet window is
   already part of every supported Windows 10/11 build, so no separate installation is
   ever required; the installer verifies it and reports clearly if it is unavailable
 
 ## Download and run
 
-1. Download **`MailDaan-Setup-1.1.2.exe`** — a single, fully self-contained offline
+1. Download **`MailDaan-Setup-1.1.3.exe`** — a single, fully self-contained offline
    installer — from [Releases](https://github.com/TahaSarhangi/maildaan/releases).
-2. Run it. If your Windows is missing the WebView2 runtime, the required Microsoft
-   runtime is installed from inside the setup file itself — **no internet connection
-   and no separate downloads are needed at any point**.
+2. Run it. The WebView2 runtime the window needs is embedded inside the setup file
+   itself — **no internet connection and no separate downloads are needed at any point**.
 3. Launch **MailDaan** from the Start Menu (an optional desktop shortcut is offered).
 
-The old one-folder ZIP (`MailDaan-1.1.2.zip`) remains available for portable use; it
+The old one-folder ZIP (`MailDaan-1.1.3.zip`) remains available for portable use; it
 requires WebView2 to already be installed on the machine.
 
 No Python installation or command-line usage is required. Your archive is stored separately in `%LOCALAPPDATA%\MailDaan` and survives updates.
@@ -90,7 +89,7 @@ python -m pip install -r requirements-build.txt
 build.bat
 ```
 
-This produces `dist\MailDaan\MailDaan.exe` (one-folder distribution) and `dist\MailDaan-1.1.2.zip` for GitHub Releases.
+This produces `dist\MailDaan\MailDaan.exe` (one-folder distribution) and `dist\MailDaan-1.1.3.zip` for GitHub Releases.
 
 ## Build the fully offline installer
 
@@ -102,13 +101,13 @@ build-installer.bat
 
 1. runs PyInstaller (one-folder build),
 2. scans the packaged tree to guarantee it contains **no user data** (no databases, `.eml` files, account settings or credentials),
-3. downloads and verifies (Authenticode signature from Microsoft + metadata + SHA-256) the official **Microsoft Edge WebView2 Evergreen Standalone Offline Installer (x64)** — the build fails if it cannot be obtained,
-4. compiles `installer\maildaan.iss` with Inno Setup (installed locally under `tools\` if needed) into a single self-contained setup executable that embeds the application *and* the offline runtime installer,
+3. discovers the official Microsoft Edge WebView2 **Fixed Version Runtime (x64)** published on Microsoft's download page, downloads its signed `.cab`, verifies its Microsoft Authenticode signature and extracts it with Microsoft's documented `expand` command (the build fails if it cannot be obtained),
+4. compiles `installer\maildaan.iss` with Inno Setup (installed locally under `tools\` if needed) into a single self-contained setup executable that embeds the application *and* the bundled runtime,
 5. verifies the produced setup and its file manifest.
 
-Result: **`dist\MailDaan-Setup-1.1.2.exe`** — the only file a Windows x64 user needs. During installation it:
+Result: **`dist\MailDaan-Setup-1.1.3.exe`** — the only file a Windows x64 user needs. During installation it:
 
-- detects the WebView2 runtime and, when it is missing, extracts and silently executes the embedded official offline installer from the setup's temporary directory (never the online bootstrapper, never any download),
+- installs the bundled Fixed Version WebView2 runtime into the application folder and applies the directory permissions Microsoft documents for it, so no system-level WebView2 installation or registration is ever needed,
 - detects the .NET Framework 4.6.2+ required by pythonnet (already part of every supported Windows 10/11) and installs the bundled official offline redistributable only when it is genuinely missing,
 - installs the complete application (Python runtime, all native dependencies, UI assets, Vazirmatn fonts, icons, localizations) to `Program Files`,
 - creates Start Menu shortcuts, offers an optional desktop shortcut, registers a standard uninstaller, and can launch MailDaan when setup finishes,
