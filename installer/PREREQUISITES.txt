@@ -1,0 +1,36 @@
+MailDaan setup — bundled Microsoft runtime redistributables
+==========================================================
+
+This setup executable is completely self-contained and works without an
+internet connection. Besides the MailDaan application it embeds the
+official Microsoft runtime redistributables that MailDaan needs:
+
+1. Microsoft Edge WebView2 Runtime — Evergreen Standalone Offline
+   Installer (x64). Microsoft Corporation. Downloaded during the build
+   from the official Microsoft distribution point
+   (https://go.microsoft.com/fwlink/?linkid=2124701) and embedded in this
+   setup. It is only executed when the WebView2 Runtime is not already
+   installed and usable on this computer.
+
+   The Microsoft Edge WebView2 Runtime is licensed by Microsoft
+   Corporation. License terms and privacy information:
+   https://learn.microsoft.com/microsoft-edge/webview2/ and
+   https://www.microsoft.com/servicesagreement/
+
+2. Microsoft .NET Framework 4.6.2 (offline redistributable), if present
+   in this build. The .NET Framework is required by the Python for .NET
+   (pythonnet) runtime that MailDaan uses for its desktop window. The
+   .NET Framework 4.6.2 or later is included as part of every supported
+   version of Windows 10 and Windows 11, so this redistributable is only
+   used when it is genuinely missing.
+
+   Microsoft .NET Framework license terms:
+   https://dotnet.microsoft.com/dotnet-framework-license
+
+MailDaan itself is licensed under the MIT License (see the LICENSE file
+installed next to this notice). The bundled Vazirmatn font is licensed
+under the SIL Open Font License 1.1 (see the third-party-licenses folder).
+
+---
+MailDaan (میل‌دان) — offline email archive and explorer — Titanium
+https://github.com/TahaSarhangi/maildaan

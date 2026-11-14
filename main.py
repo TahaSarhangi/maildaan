@@ -12,6 +12,7 @@ import os
 import shutil
 import sys
 import threading
+import time
 import traceback
 
 import webview
@@ -75,6 +76,7 @@ class AppApi:
         self.sync_thread = None
         self.sync_account_id = None
         self.last_report = None
+        self.bootstrapped = False  # set by getInitialState (frontend live)
         self._password = ""  # in-memory only, cleared when sync ends
         self._lock = threading.Lock()
 
@@ -88,6 +90,7 @@ class AppApi:
         registry = [accounts.public_account(a) for a in accounts.all_accounts()]
         active = self._resolve_active()
         logger.info("frontend bootstrap: %d account(s) configured", len(registry))
+        self.bootstrapped = True
         return {
             "language": self.settings.get("language"),
             "theme": self.settings.get("theme") or "light",
@@ -560,10 +563,60 @@ def show_webview2_error(lang):
         pass
 
 
+def webview2_runtime_present():
+    """True when the Edge WebView2 runtime binaries are actually on disk.
+
+    Windows can register the Evergreen runtime in the registry while its
+    binaries cannot be resolved (minimal images such as Windows Sandbox),
+    which leaves pywebview with a window that never renders anything.
+    """
+    pf = os.environ.get("ProgramFiles") or r"C:\Program Files"
+    pf86 = os.environ.get("ProgramFiles(x86)") or r"C:\Program Files (x86)"
+    local = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~\\AppData\\Local")
+    for base in (pf, pf86, local):
+        root = os.path.join(base, "Microsoft", "EdgeWebView", "Application")
+        if os.path.isdir(root):
+            for name in os.listdir(root):
+                if os.path.exists(os.path.join(root, name, "msedgewebview2.exe")):
+                    return True
+    return False
+
+
+def start_frontend_watchdog(api, timeout=30):
+    """Replace a silently blank window with a clear, actionable message.
+
+    WebView2 can fail to initialize after the native window has already
+    opened (e.g. the runtime is registered but unusable). pywebview only
+    logs the error, leaving a white window with no UI. If the frontend has
+    not bootstrapped by `timeout` seconds, log the diagnosis and show the
+    dialog that explains how to repair the runtime.
+    """
+    def watch():
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if api.bootstrapped:
+                return
+            time.sleep(1)
+        if api.bootstrapped:
+            return
+        logger.error(
+            "frontend did not bootstrap within %ss — the WebView2 runtime "
+            "is missing or failed to initialize (renderer=%s, runtime "
+            "files present=%s)",
+            timeout, getattr(webview, "renderer", "unknown"),
+            webview2_runtime_present())
+        show_webview2_error(api.settings.get("language"))
+
+    threading.Thread(target=watch, name="maildaan-watchdog",
+                     daemon=True).start()
+
+
 def main():
     setup_logging()
     logger.info("MailDaan %s starting", config.APP_VERSION)
     settings = config.load_settings()
+    logger.info("webview2 runtime files present: %s",
+                webview2_runtime_present())
 
     icon_path = os.path.join(config.get_asset_dir(), "maildaan.ico")
     if not os.path.exists(icon_path):
@@ -602,6 +655,7 @@ def main():
 
         window.events.closing += on_closing
 
+        start_frontend_watchdog(api)
         webview.start(debug=False, http_server=True, icon=icon_path)
     except Exception:
         log_startup_exception(sys.exc_info()[1])
@@ -609,6 +663,7 @@ def main():
         sys.exit(1)
 
     # Window closed — stop workers and finish cleanly.
+    logger.info("window closed (renderer=%s)", getattr(webview, "renderer", "unknown"))
     if api.sync_running():
         if api.cancel_event:
             api.cancel_event.set()

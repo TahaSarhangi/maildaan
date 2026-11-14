@@ -9,7 +9,7 @@ import os
 import sys
 
 APP_NAME = "MailDaan"
-APP_VERSION = "1.1.1"
+APP_VERSION = "1.1.2"
 DEVELOPER = "Titanium"
 DEVELOPER_URL = "https://github.com/TahaSarhangi"
 COPYRIGHT = "© 2026 MailDaan"

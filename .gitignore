@@ -31,3 +31,12 @@ Thumbs.db
 desktop.ini
 .vscode/
 .idea/
+
+# Offline installer build inputs (auto-downloaded by build-installer.ps1)
+# The Microsoft offline runtime installers are large and must never be
+# committed; the build verifies their signature and embeds them into
+# dist\MailDaan-Setup-<version>.exe.
+tools/*
+!tools/make_icon.py
+installer/prerequisites/*.exe
+installer/prerequisites/manifest.json
