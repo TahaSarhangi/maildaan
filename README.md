@@ -1,75 +1,117 @@
 # MailDaan
 
-**MailDaan** (میل‌دان) is a lightweight, bilingual (Persian/English), **offline email archive and explorer** for Windows.
+**MailDaan** (میل‌دان) is a free, open-source, **offline email archive and explorer** for
+Windows. It speaks **Persian and English**, connects to any IMAP account, downloads every
+accessible message and attachment into a fully local archive, and then lets you browse,
+search and export your email — **completely offline**.
 
-It connects to an IMAP account once, downloads every accessible message and attachment into a local archive (SQLite + original `.eml` files), and then lets you browse, search, filter and export your email — completely offline.
+**Language:** [English](README.md) · [فارسی (Persian)](README.fa.md)
 
-- Developer: **Titanium** — https://github.com/TahaSarhangi
-- Version: 1.1.3
-- License: MIT
+- **Developer:** Titanium — https://github.com/TahaSarhangi
+- **Version:** 1.1.3
+- **License:** MIT (see [LICENSE](LICENSE))
 
-## Features
+## Why MailDaan
 
-- **Complete IMAP archiving** — discovers every selectable folder (Inbox, Sent, Drafts, Spam, custom and nested folders), downloads full message content, attachments, and original `.eml` files.
-- **Multiple email accounts** — archive several IMAP accounts side by side. Each account keeps its own independent archive (separate SQLite database, `.eml` files, attachments, folders and sync checkpoints), and switching accounts from the sidebar instantly loads that account's data.
-- **Professional desktop interface** — persistent navigation sidebar, compact top toolbar, three-pane archive explorer (folders / message list / message detail), light and dark themes with sun/moon switching that persists between launches, and a consistent bundled SVG icon set.
-- **Offline browsing** — read messages, view and save attachments, no internet connection required after the first sync.
-- **Incremental sync with recovery** — uses IMAP UID + UIDVALIDITY checkpoints. An interrupted sync resumes where it stopped; a failed batch never advances the checkpoint.
-- **Bilingual interface** — Persian (RTL, Vazirmatn font) and English (LTR), switchable at any time. First launch asks for your language.
-- **Search, filter and sort** — fast SQLite FTS5-backed search across senders, recipients, subjects and bodies, with Persian character normalization (ی/ي, ک/ك, diacritics, ZWNJ), keyboard-layout correction (Persian↔English), typo-tolerant "did you mean …?" suggestions, date and folder filters, and pagination.
-- **Optional application password** — protect access to MailDaan with a password (Argon2id hash, never stored in plaintext). When enabled, MailDaan asks for it after every start. This is an application access lock; it does not encrypt the archive, and there is no password reset bypass.
-- **Deduplication** — the same message stored in several folders appears once, with all folder associations preserved.
-- **Optional Excel reports** — export the current view (or the whole archive) to a formatted workbook with Messages, Contacts and Organizations sheets. Never generated automatically.
-- **Private by design** — your archive lives in `%LOCALAPPDATA%\MailDaan`, never inside the application folder, and your password is never stored.
+Your email stays yours. MailDaan copies your messages into a **local archive on your own
+machine** — after that, reading, searching and exporting your email needs **no internet
+connection at all**. There is no cloud, no account on any third-party service, and no
+data leaving your computer.
 
-## Windows requirements
+An internet connection is required **only to download new email** from your IMAP server.
+Installing the application, and browsing or searching an existing archive, never needs one.
 
-- Windows 10 (version 1809 or later) or Windows 11, **64-bit (x64)**
-- No WebView2 download needed: the offline installer embeds the official Microsoft
-  Edge WebView2 **Fixed Version Runtime (x64)** and uses that private copy, so setup
-  never installs, downloads or asks for a system WebView2 runtime
-- The .NET Framework 4.6.2 runtime used by the embedded pywebview/pythonnet window is
-  already part of every supported Windows 10/11 build, so no separate installation is
-  ever required; the installer verifies it and reports clearly if it is unavailable
+## Main features
 
-## Download and run
+- **Complete IMAP archiving** — discovers every selectable folder (Inbox, Sent, Drafts,
+  Spam, custom and nested folders) and downloads full message content, attachments and the
+  original `.eml` files.
+- **Multiple independent accounts** — archive several IMAP accounts side by side. Each
+  account keeps its own separate archive: its own SQLite database, `.eml` files,
+  attachments, folders, sync checkpoints and TLS trust settings.
+- **Incremental synchronization** — IMAP `UID` + `UIDVALIDITY` checkpoints make every sync
+  download only what is new. An interrupted sync resumes exactly where it stopped, and a
+  failed batch never advances the checkpoint.
+- **Intelligent offline search** — a fast SQLite FTS5 index across senders, recipients,
+  subjects and bodies, with Persian character normalization (ی/ي, ک/ك, diacritics, ZWNJ),
+  keyboard-layout correction (typing a Persian word on an English layout still finds it,
+  and vice versa) and typo-tolerant *"Did you mean …?"* suggestions, plus date, folder and
+  participant filters.
+- **Bilingual dates** — message dates are shown in the **Persian Jalali** calendar with
+  Persian digits in the Persian interface, and in the **Gregorian** calendar in English.
+- **Professional desktop interface** — persistent sidebar, three-pane archive explorer
+  (folders / message list / message detail), light and dark themes, bundled Vazirmatn font
+  for the Persian UI, switchable between Persian (RTL) and English (LTR) at any time.
+- **Optional Excel reports** — export the current view (or the whole archive) to a formatted
+  workbook with **Messages**, **Contacts** and **Organizations** sheets. Reports are never
+  generated automatically — only when you ask for one.
+- **Optional application password** — protect entry into MailDaan with a password stored
+  as an **Argon2id hash** (never in plaintext). This is an application-level access lock
+  only — it does **not** encrypt the archive, and there is deliberately no password-reset
+  bypass.
+- **Private by design** — your archive lives in `%LOCALAPPDATA%\MailDaan`, never inside the
+  application folder. Your IMAP password is kept in memory **only** for the active
+  synchronization and is never written to disk.
 
-1. Download **`MailDaan-Setup-1.1.3.exe`** — a single, fully self-contained offline
-   installer — from [Releases](https://github.com/TahaSarhangi/maildaan/releases).
-2. Run it. The WebView2 runtime the window needs is embedded inside the setup file
-   itself — **no internet connection and no separate downloads are needed at any point**.
+## Windows compatibility
+
+- **Windows 10 (version 1809 or later)** or **Windows 11**, **64-bit (x64) only**
+- The Microsoft .NET Framework 4.6.2 runtime used by the desktop window is already part of
+  every supported Windows 10/11 build; the installer verifies this and can install the
+  bundled official offline redistributable automatically if it is ever genuinely missing.
+
+## Completely offline installer
+
+`MailDaan-Setup-1.1.3.exe` is a single, fully self-contained setup program:
+
+- It embeds the official **Microsoft Edge WebView2 Fixed Version Runtime (x64)** and uses
+  that private copy, so setup **never installs, downloads or asks for** a system WebView2
+  runtime.
+- It contains the complete application: Python runtime, all native dependencies, UI assets,
+  Vazirmatn fonts, icons and localizations.
+- **No internet connection and no separate downloads are needed at any point** during
+  installation.
+- It installs to `Program Files`, creates Start Menu shortcuts, offers an optional desktop
+  shortcut, registers a standard uninstaller, and **never touches** your archive data.
+
+## Screenshots
+
+Both screens were captured during an automated offline acceptance test in a clean Windows
+Sandbox (no email account configured), so they contain no user data.
+
+<p float="left">
+  <img src="docs/screenshots/first-run-language.png" width="420" alt="MailDaan first run — language selection" />
+  <img src="docs/screenshots/persian-interface.png" width="420" alt="MailDaan Persian interface" />
+</p>
+
+## Download and install
+
+1. Download **`MailDaan-Setup-1.1.3.exe`** from the
+   [Releases](https://github.com/TahaSarhangi/maildaan/releases) page.
+2. Run it — no internet connection is required. Verify the download anytime against the
+   published `MailDaan-Setup-1.1.3.exe.sha256` checksum file.
 3. Launch **MailDaan** from the Start Menu (an optional desktop shortcut is offered).
 
-The old one-folder ZIP (`MailDaan-1.1.3.zip`) remains available for portable use; it
-requires WebView2 to already be installed on the machine.
+Your archive is stored separately in `%LOCALAPPDATA%\MailDaan` and survives updates and
+uninstallations.
 
-No Python installation or command-line usage is required. Your archive is stored separately in `%LOCALAPPDATA%\MailDaan` and survives updates.
+## Basic usage
 
-## Configure IMAP
-
-On first launch MailDaan asks for:
-
-- **IMAP Server** (for example `imap.gmail.com`)
-- **IMAP Port** (default `993`, IMAP over TLS)
-- **Email address / username**
-- **Password**
-
-The password is used only for the active synchronization and is never written to disk. (For Gmail, generate an app password and enable IMAP in Gmail settings.)
-
-## Synchronize emails
-
-- The first synchronization downloads every accessible folder.
-- Progress, speed and estimated time are shown inside the application window.
-- Use **Sync Emails** («به‌روزرسانی ایمیل‌ها») at any time to download only new messages.
-- You can cancel at any time; completed downloads are kept and the next sync resumes from the checkpoint.
-
-## Browse offline
-
-After the first sync, MailDaan opens directly into your local archive — no network connection needed. Select folders, search, filter by date or participant, open messages, and save attachments or the original `.eml` file.
-
-## Export to Excel
-
-Choose **Export to Excel** («خروجی اکسل»). The workbook is generated only after you confirm, and covers the current search/filter scope (or the whole archive when no filters are active). Sheets: Messages, Contacts, Organizations.
+1. **Choose your language** on first launch (Persian or English; switchable later at any
+   time from the sidebar).
+2. **Add your email account** — IMAP server (for example `imap.gmail.com`), port
+   (default `993`, IMAP over TLS), email address and password. The password is used only
+   for that synchronization and is never stored.
+   *(For Gmail: enable IMAP in Gmail settings and generate an app password.)*
+3. **Synchronize** — the first sync downloads every accessible folder. Progress, speed and
+   estimated time are shown in the application window. You can cancel at any time;
+   completed downloads are kept and the next sync resumes from the checkpoint.
+4. **Browse offline** — open folders, read messages, view and save attachments, or save the
+   original `.eml` file.
+5. **Search** — type a name, subject or any text. Persian/English keyboard-layout mistakes
+   and most typos are still found, with *"Did you mean …?"* suggestions.
+6. **Export to Excel** (optional) — generate a workbook from the current search/filter
+   scope, or from the whole archive when no filters are active.
 
 ## Run from source
 
@@ -80,51 +122,25 @@ python -m pip install -r requirements.txt
 run-dev.bat
 ```
 
-Requires Python 3.11+ on Windows.
+Requires Python 3.11+ on Windows. To build the executable and the fully offline installer,
+run `build.bat` then `build-installer.bat` (see
+[build the fully offline installer](#completely-offline-installer) above and
+`installer/prerequisites/README.txt`).
 
-## Build the executable
+## Third-party licenses and attribution
 
-```bat
-python -m pip install -r requirements-build.txt
-build.bat
-```
+MailDaan is licensed under the **MIT License** — see [LICENSE](LICENSE).
 
-This produces `dist\MailDaan\MailDaan.exe` (one-folder distribution) and `dist\MailDaan-1.1.3.zip` for GitHub Releases.
+- **Vazirmatn font** — Copyright © 2015 Saber Rastikerdar and contributors, licensed under
+  the SIL Open Font License 1.1 (see [third-party-licenses](third-party-licenses)).
+- **IMAPClient** — BSD 3-Clause · **openpyxl** — MIT · **pywebview** — BSD 3-Clause ·
+  **argon2-cffi** — MIT · **RapidFuzz** — MIT.
+- **Microsoft Edge WebView2 Fixed Version Runtime (x64)** — a free Microsoft redistributable
+  bundled inside the application folder for fully offline use, under Microsoft's license
+  terms (<https://learn.microsoft.com/microsoft-edge/webview2/>). The official .NET Framework
+  offline redistributable may also be embedded; see `installer/PREREQUISITES.txt`.
 
-## Build the fully offline installer
+---
 
-```bat
-build-installer.bat
-```
-
-`build-installer.ps1` (wrapped by the batch file) performs the whole pipeline:
-
-1. runs PyInstaller (one-folder build),
-2. scans the packaged tree to guarantee it contains **no user data** (no databases, `.eml` files, account settings or credentials),
-3. discovers the official Microsoft Edge WebView2 **Fixed Version Runtime (x64)** published on Microsoft's download page, downloads its signed `.cab`, verifies its Microsoft Authenticode signature and extracts it with Microsoft's documented `expand` command (the build fails if it cannot be obtained),
-4. compiles `installer\maildaan.iss` with Inno Setup (installed locally under `tools\` if needed) into a single self-contained setup executable that embeds the application *and* the bundled runtime,
-5. verifies the produced setup and its file manifest.
-
-Result: **`dist\MailDaan-Setup-1.1.3.exe`** — the only file a Windows x64 user needs. During installation it:
-
-- installs the bundled Fixed Version WebView2 runtime into the application folder and applies the directory permissions Microsoft documents for it, so no system-level WebView2 installation or registration is ever needed,
-- detects the .NET Framework 4.6.2+ required by pythonnet (already part of every supported Windows 10/11) and installs the bundled official offline redistributable only when it is genuinely missing,
-- installs the complete application (Python runtime, all native dependencies, UI assets, Vazirmatn fonts, icons, localizations) to `Program Files`,
-- creates Start Menu shortcuts, offers an optional desktop shortcut, registers a standard uninstaller, and can launch MailDaan when setup finishes,
-- never touches `%LOCALAPPDATA%\MailDaan` — email archives, SQLite databases, attachments, account and application settings survive installation, upgrade and uninstallation.
-
-## Data location
-
-All user data is stored in `%LOCALAPPDATA%\MailDaan\` — completely separate from the application:
-
-- `app_settings.json` — language, theme, active account
-- `app_password.json` — Argon2id hash of the optional application password (never the plaintext password)
-- `accounts.json` — account registry (no passwords are ever stored)
-- `accounts\<id>\` — per-account independent archives (`archive.db` including its search index, `eml\`, `attachments\`)
-- `data\` — a MailDaan 1.0 single-account archive is adopted in place and kept untouched
-
-Upgrading from 1.0 is automatic: the existing archive is registered as the first account and continues to work without re-downloading anything.
-
-## License
-
-MIT — see [LICENSE](LICENSE). The bundled Vazirmatn font is licensed under the SIL Open Font License 1.1 (see [third-party-licenses](third-party-licenses)).
+**MailDaan** — free, open-source bilingual offline email archiving and exploration for
+Windows. **Developed by Titanium** — https://github.com/TahaSarhangi

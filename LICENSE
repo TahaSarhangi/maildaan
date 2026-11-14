@@ -29,3 +29,11 @@ MailDaan bundles the following third-party resources:
 - IMAPClient — licensed under the BSD 3-Clause License (https://github.com/mjs/imapclient).
 - openpyxl — licensed under the MIT License (https://foss.heptapod.net/openpyxl/openpyxl).
 - pywebview — licensed under the BSD 3-Clause License (https://github.com/r0x0r/pywebview).
+- argon2-cffi — licensed under the MIT License (https://github.com/hynek/argon2-cffi).
+- RapidFuzz — licensed under the MIT License (https://github.com/rapidfuzz/RapidFuzz).
+
+The official Microsoft Edge WebView2 Fixed Version Runtime (x64) and the
+optional Microsoft .NET Framework offline redistributable embedded by the
+installer are free Microsoft redistributables, redistributed under
+Microsoft's license terms (see third-party-licenses/README.txt and
+installer/PREREQUISITES.txt).
