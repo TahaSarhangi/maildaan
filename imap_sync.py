@@ -238,7 +238,10 @@ class SyncEngine:
 
     # ------------------------------------------------------------------ utils
 
-    def _folder_display(self, imap_name: str, delimiter: str) -> str:
+    def _folder_display(self, imap_name: str, delimiter) -> str:
+        if isinstance(delimiter, bytes):
+            # IMAPClient returns the folder delimiter as bytes.
+            delimiter = delimiter.decode("ascii", "replace")
         if imap_name.upper() == "INBOX":
             return "Inbox"
         base = imap_name.split(delimiter)[-1] if delimiter else imap_name
