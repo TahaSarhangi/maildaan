@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import shutil
+import ssl
 import sys
 import threading
 import time
@@ -23,6 +24,7 @@ import config
 import dialogs
 import export
 import imap_sync
+import imaptls
 import storage
 
 logger = logging.getLogger("maildaan")
@@ -286,7 +288,8 @@ class AppApi:
         engine = imap_sync.SyncEngine(
             host, port, account["email"], password, self.sync_state,
             self.cancel_event, db_path=paths["db"], data_dir=paths["root"],
-            account_id=account_id, account_email=account.get("email") or "")
+            account_id=account_id, account_email=account.get("email") or "",
+            account=account)
         self.sync_thread = threading.Thread(target=self._run_sync, args=(engine,),
                                             name="maildaan-sync", daemon=True)
         self.sync_thread.start()
@@ -317,10 +320,12 @@ class AppApi:
                     pass
             try:
                 payload = json.dumps(report, ensure_ascii=False)
+                # Pass the report as a JSON *string*: pushReport() runs
+                # JSON.parse() on its argument.
                 for window in webview.windows:
                     window.evaluate_js(
-                        "window.maildaan && maildaan.pushReport(" +
-                        payload.replace("\\", "\\\\").replace("'", "\\'") + ")")
+                        "window.maildaan && maildaan.pushReport('" +
+                        payload.replace("\\", "\\\\").replace("'", "\\'") + "')")
             except Exception:
                 pass
 
@@ -339,6 +344,43 @@ class AppApi:
         if self.cancel_event:
             self.cancel_event.set()
         return {"ok": True}
+
+    # ------------------------------------------------------------- TLS trust
+
+    @requires_unlock
+    def trustServerCertificate(self, account_id, sha256):
+        """Pin the presented server certificate for this account only.
+
+        Binds the user's decision to exactly the fingerprint shown in the
+        certificate dialog, so a certificate swapped in the meantime can
+        never be trusted silently.
+        """
+        account = accounts.get_account(account_id)
+        if account is None:
+            return {"error_key": "accounts.notFound"}
+        try:
+            imaptls.save_pin(account, str(sha256 or ""))
+        except ValueError:
+            return {"error_key": "tls.changed"}
+        logger.info("pinned server certificate for account %s", account_id)
+        return {"ok": True}
+
+    @requires_unlock
+    def importCaCertificate(self, account_id):
+        """Import a custom trusted CA certificate (PEM) for this account."""
+        account = accounts.get_account(account_id)
+        if account is None:
+            return {"error_key": "accounts.notFound"}
+        source = dialogs.open_dialog("MailDaan", extension="pem")
+        if not source:
+            return None
+        try:
+            saved = imaptls.save_ca(account, source)
+        except (ssl.SSLError, OSError, ValueError) as exc:
+            logger.warning("CA import failed for account %s: %s", account_id, exc)
+            return {"error": str(exc)}
+        logger.info("imported custom CA for account %s", account_id)
+        return {"ok": True, "path": saved}
 
     def exitApp(self, force=False):
         if self.sync_running():

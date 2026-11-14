@@ -15,12 +15,14 @@ import html as _html
 import logging
 import os
 import re
+import ssl
 import threading
 import time
 import traceback
 from imapclient import IMAPClient
 
 import config
+import imaptls
 import storage
 
 BATCH_SIZE = 100
@@ -215,7 +217,8 @@ class SyncEngine:
     def __init__(self, host: str, port: int, username: str, password: str,
                  state: SyncState, cancel_event: threading.Event,
                  db_path: str = None, data_dir: str = None,
-                 account_id: str = "", account_email: str = ""):
+                 account_id: str = "", account_email: str = "",
+                 account: dict = None):
         self.host = host
         self.port = int(port)
         self.username = username
@@ -225,6 +228,10 @@ class SyncEngine:
         self.db = None
         self.db_path = db_path
         self.data_dir = data_dir
+        # Per-account TLS trust (custom CA / pinned certificate) so an
+        # untrusted server can be handled per account without ever
+        # weakening verification globally.
+        self.trust = imaptls.load_trust(account) if account else {}
         with state.lock:
             state.account_id = account_id
             state.account_email = account_email
@@ -238,8 +245,22 @@ class SyncEngine:
         return base.strip() or imap_name
 
     def _connect(self) -> IMAPClient:
-        client = IMAPClient(self.host, port=self.port, ssl=True, timeout=60,
-                            use_uid=True)
+        """Connect over TLS and log in, using this account's trust settings."""
+        try:
+            client = imaptls.connect(self.host, self.port, self.trust, timeout=60)
+        except (imaptls.CertificateRejected, ssl.SSLCertVerificationError) as exc:
+            # The chain is not trusted for this account. Gather the
+            # certificate the server is presenting now — on an inspection
+            # socket that carries no IMAP traffic and no credentials — so
+            # the user can review it and decide.
+            pin_mismatch = isinstance(exc, imaptls.CertificateRejected)
+            try:
+                details = imaptls.inspect_certificate(self.host, self.port)
+            except OSError:
+                details = {"host": self.host, "port": self.port}
+            details["pin_mismatch"] = pin_mismatch
+            raise imaptls.CertificateRejected(str(exc), pin_mismatch, details) \
+                from exc
         client.login(self.username, self.password)
         return client
 
@@ -287,6 +308,22 @@ class SyncEngine:
             client = self._connect()
             with self.state.lock:
                 self.state.connected = True
+        except imaptls.CertificateRejected as exc:
+            # The user must decide about this certificate: report its
+            # details instead of a bare verification error.
+            LOG.error("IMAP TLS trust failed for %s: %s", self.host, exc)
+            self.db.finish_sync_log(log_id, "error", 0, 0, 1, time.time() - started)
+            self.db.close()
+            with self.state.lock:
+                self.state.status = "error"
+                self.state.last_error = str(exc)
+                self.state.running = False
+            return {"status": "error", "error": str(exc),
+                    "tls_error": exc.details, "new_messages": 0,
+                    "deduped": 0, "errors": 1, "folders_processed": 0,
+                    "elapsed": time.time() - started,
+                    "account_id": self.state.account_id,
+                    "account_email": self.state.account_email}
         except Exception as exc:
             LOG.error("IMAP connection failed: %s", exc)
             self.db.finish_sync_log(log_id, "error", 0, 0, 1, time.time() - started)
@@ -318,7 +355,10 @@ class SyncEngine:
                         if f["id"] == folder_id:
                             last_uid = f["last_completed_uid"]
                             break
-                    pending = [u for u in client.search("UID", f"{last_uid + 1}:*")
+                    # imapclient's search() takes one criteria argument:
+                    # pass the criteria as a list so the UID range is not
+                    # mistaken for the charset.
+                    pending = [u for u in client.search(["UID", f"{last_uid + 1}:*"])
                                if isinstance(u, int) and u > last_uid]
                     if pending:
                         plan.append((folder_id, imap_name, display, pending))

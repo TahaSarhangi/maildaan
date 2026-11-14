@@ -58,6 +58,23 @@
     "dark": "Dark"
   },
 
+  "tls": {
+    "title": "Untrusted certificate",
+    "body": "The IMAP server's TLS certificate could not be verified against the certificate authorities trusted by this computer.",
+    "pinMismatch": "The certificate presented by the server no longer matches the certificate you previously trusted for this account. The connection was refused to protect your credentials.",
+    "server": "Server",
+    "subject": "Subject",
+    "issuer": "Issuer",
+    "validFrom": "Valid from",
+    "validTo": "Valid until",
+    "fingerprint": "SHA-256 fingerprint",
+    "trust": "Trust this certificate",
+    "trustHint": "Trusting remembers this certificate for this account only. MailDaan refuses to connect when the certificate changes.",
+    "importCa": "Import CA certificate",
+    "caFailed": "The selected file is not a usable PEM certificate authority.",
+    "changed": "The certificate changed while you were deciding. Please review the certificate and try again."
+  },
+
   "accounts": {
     "title": "Email Accounts",
     "add": "Add Account",

@@ -13,6 +13,7 @@ ole32 = ctypes.WinDLL("ole32")
 
 OFN_OVERWRITEPROMPT = 0x00000002
 OFN_PATHMUSTEXIST = 0x00000800
+OFN_FILEMUSTEXIST = 0x00001000
 OFN_NOREADONLYRETURN = 0x00008000
 BIF_RETURNONLYFSDIRS = 0x00000001
 BIF_NEWDIALOGSTYLE = 0x00000040
@@ -64,6 +65,28 @@ def _ensure_com():
         ole32.CoInitialize(None)
     except OSError:
         pass
+
+
+def open_dialog(title: str, extension: str = "pem") -> str:
+    """Show a native Open dialog for one existing file. Returns the chosen
+    path or ''. Used to import a custom CA certificate (PEM)."""
+    _ensure_com()
+    buffer = ctypes.create_unicode_buffer(4096)
+    buffer.value = ""
+    ext = extension.lstrip(".")
+    filter_text = f"{ext.upper()} files (*.{ext})\0*.{ext}\0All files (*.*)\0*.*\0"
+    ofn = _OpenFileNameW()
+    ofn.lStructSize = ctypes.sizeof(ofn)
+    ofn.hwndOwner = None
+    ofn.lpstrFilter = filter_text
+    ofn.nFilterIndex = 1
+    ofn.lpstrFile = ctypes.cast(buffer, wintypes.LPWSTR)
+    ofn.nMaxFile = 4096
+    ofn.lpstrTitle = title
+    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST
+    if comdlg32.GetOpenFileNameW(ctypes.byref(ofn)):
+        return buffer.value
+    return ""
 
 
 def save_dialog(title: str, default_name: str = "", extension: str = "xlsx") -> str:

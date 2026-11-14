@@ -836,6 +836,11 @@ function makeProgress(label, done, total, percent, secondary) {
 }
 
 function renderReport(r) {
+  if (r && r.tls_error) {
+    // Untrusted certificate chain: render the error report, then put the
+    // bilingual certificate dialog on top so the user can decide.
+    openTlsTrustDialog(r);
+  }
   const statusKey = {
     completed: "statusCompleted", incomplete: "statusIncomplete",
     cancelled: "statusCancelled", error: "statusError", running: "statusRunning",
@@ -881,6 +886,79 @@ function renderReport(r) {
 function reportRow(label, value) {
   return '<div class="report-row"><span>' + esc(label) + '</span><b>' +
     (typeof value === "number" ? toDigits(value) : esc(value)) + "</b></div>";
+}
+
+/* ---------------------------------------------------- certificate trust */
+
+function openTlsTrustDialog(r) {
+  const cert = r.tls_error || {};
+  const accountId = r.account_id || state.syncAccountId;
+  const account = state.accounts.find((a) => a.id === accountId);
+  const serverLine = esc(cert.host || "") + (cert.port ? ":" + toDigits(cert.port) : "");
+  const pairs = (cert.sha256 || "").match(/.{2}/g);
+  const fingerprint = pairs ? pairs.join(":") : esc(cert.sha256 || "");
+  const accountName = account ? (account.email || account.imap_host || "") : "";
+  const row = (label, value) =>
+    '<div class="cert-row"><span>' + esc(label) + "</span><b>" + esc(value || "—") + "</b></div>";
+  const body =
+    (cert.pin_mismatch
+      ? '<div class="sync-error" style="margin:0 0 12px">' +
+        esc(t("tls.pinMismatch", "The certificate no longer matches the certificate you previously trusted for this account.")) + "</div>"
+      : '<p style="margin:0 0 12px">' +
+        esc(t("tls.body", "The IMAP server's TLS certificate could not be verified.")) + "</p>") +
+    '<div class="cert-card">' +
+    row(t("tls.server", "Server"), (accountName ? accountName + " · " : "") + serverLine) +
+    row(t("tls.subject", "Subject"), cert.subject) +
+    row(t("tls.issuer", "Issuer"), cert.issuer) +
+    row(t("tls.validFrom", "Valid from"), cert.valid_from) +
+    row(t("tls.validTo", "Valid until"), cert.valid_to) +
+    "</div>" +
+    '<div class="cert-fp-label">' + esc(t("tls.fingerprint", "SHA-256 fingerprint")) + "</div>" +
+    '<div class="cert-fingerprint">' + fingerprint + "</div>" +
+    '<p class="cert-hint">' +
+      esc(t("tls.trustHint", "Trusting remembers this certificate for this account only; MailDaan refuses to connect when it changes.")) +
+    "</p>";
+  showModal(t("tls.title", "Untrusted certificate"), body, [
+    { label: t("common.cancel", "Cancel") },
+    {
+      label: t("tls.importCa", "Import CA certificate"), primary: true, keepOpen: false,
+      onClick: () => onImportCa(r)
+    },
+    {
+      label: t("tls.trust", "Trust this certificate"), danger: true,
+      onClick: () => onTrustCertificate(r, cert)
+    }
+  ]);
+}
+
+async function onTrustCertificate(r, cert) {
+  const accountId = r.account_id || state.syncAccountId;
+  const res = await api().trustServerCertificate(accountId, cert.sha256 || "");
+  if (!res) return;
+  if (res.error_key) { errorModal(res); return; }
+  if (res.error) { infoModal(t("common.error", "Error"), res.error); return; }
+  restartSyncAfterTrust(accountId);
+}
+
+async function onImportCa(r) {
+  const accountId = r.account_id || state.syncAccountId;
+  const res = await api().importCaCertificate(accountId);
+  if (!res) return;  // file picker cancelled
+  if (res.error) {
+    infoModal(t("tls.caFailed", "The selected file is not a usable PEM certificate authority."), res.error);
+    return;
+  }
+  restartSyncAfterTrust(accountId);
+}
+
+function restartSyncAfterTrust(accountId) {
+  const account = state.accounts.find((a) => a.id === accountId);
+  if (!account) return;
+  state.syncReport = null;
+  askPassword(
+    t("sync.title", "Synchronization"),
+    esc(t("config.password", "Password")) + " — <b>" + esc(account.email) + "</b>",
+    (pw) => startSync(account.id, pw));
 }
 
 /* ------------------------------------------------------------------- export */
