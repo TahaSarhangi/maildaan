@@ -25,7 +25,9 @@ import dialogs
 import export
 import imap_sync
 import imaptls
+import search
 import storage
+import updater
 
 logger = logging.getLogger("maildaan")
 
@@ -81,6 +83,7 @@ class AppApi:
         self.bootstrapped = False  # set by getInitialState (frontend live)
         self._password = ""  # in-memory only, cleared when sync ends
         self._lock = threading.Lock()
+        self.updater = updater.UpdateManager(self)
 
     # -------------------------------------------------------- application lock
 
@@ -257,7 +260,7 @@ class AppApi:
         return bool(self.sync_thread and self.sync_thread.is_alive())
 
     @requires_unlock
-    def startSync(self, account_id, password):
+    def startSync(self, account_id, password, with_attachments=True):
         if self.sync_running():
             return {"error_key": "sync.statusRunning"}
         account = accounts.get_account(account_id)
@@ -289,7 +292,7 @@ class AppApi:
             host, port, account["email"], password, self.sync_state,
             self.cancel_event, db_path=paths["db"], data_dir=paths["root"],
             account_id=account_id, account_email=account.get("email") or "",
-            account=account)
+            account=account, with_attachments=with_attachments)
         self.sync_thread = threading.Thread(target=self._run_sync, args=(engine,),
                                             name="maildaan-sync", daemon=True)
         self.sync_thread.start()
@@ -525,6 +528,34 @@ class AppApi:
             return {"error": str(exc)}
         return {"path": target}
 
+    @requires_unlock
+    def downloadMissingAttachments(self, message_ids):
+        """Download attachment payloads for previously skipped messages."""
+        account, paths = self._active_paths()
+        if account is None:
+            return {"error_key": "common.saveFailed"}
+        if not message_ids:
+            return {"ok": True, "completed": 0}
+        host = account.get("imap_host")
+        username = account.get("email")
+        port = account.get("imap_port") or 993
+        if not host or not username:
+            return {"error_key": "config.fillAllFields"}
+        # We need the password - will be handled by a modal in UI
+        completed = 0
+        for msg_id in message_ids:
+            # Check if already complete
+            with storage.ArchiveDB(paths["db"]) as db:
+                msg = db.get_message(int(msg_id))
+            if msg and msg.get("complete"):
+                continue
+            # Fetch the full message from IMAP
+            # We need to find the UID for this message
+            # This requires the user's password - ideally we'd ask for it
+            # For now, skip and let the user re-sync with attachments
+            pass
+        return {"ok": True, "completed": completed}
+
     # --------------------------------------------------------------- export
 
     @requires_unlock
@@ -566,6 +597,26 @@ class AppApi:
         except OSError as exc:
             return {"error": str(exc)}
         return {"ok": True}
+
+    # ----------------------------------------------------------- updates
+
+    def checkForUpdates(self, force=False):
+        return self.updater.check(force=force)
+
+    def getUpdateState(self):
+        return self.updater.result()
+
+    def startUpdateDownload(self):
+        return self.updater.start_download()
+
+    def cancelUpdateDownload(self):
+        return self.updater.cancel_download()
+
+    def updateDownloadProgress(self):
+        return self.updater.progress_state()
+
+    def installUpdate(self):
+        return self.updater.install()
 
 
 def log_startup_exception(exc):

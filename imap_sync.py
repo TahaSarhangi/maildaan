@@ -218,7 +218,7 @@ class SyncEngine:
                  state: SyncState, cancel_event: threading.Event,
                  db_path: str = None, data_dir: str = None,
                  account_id: str = "", account_email: str = "",
-                 account: dict = None):
+                 account: dict = None, with_attachments: bool = True):
         self.host = host
         self.port = int(port)
         self.username = username
@@ -228,6 +228,7 @@ class SyncEngine:
         self.db = None
         self.db_path = db_path
         self.data_dir = data_dir
+        self.with_attachments = with_attachments
         # Per-account TLS trust (custom CA / pinned certificate) so an
         # untrusted server can be handled per account without ever
         # weakening verification globally.
@@ -473,7 +474,10 @@ class SyncEngine:
                 break
             batch = pending[i:i + BATCH_SIZE]
             try:
-                fetched = client.fetch(batch, ["BODY.PEEK[]"])
+                if self.with_attachments:
+                    fetched = client.fetch(batch, ["BODY.PEEK[]"])
+                else:
+                    fetched = client.fetch(batch, ["BODYSTRUCTURE", "BODY.PEEK[HEADER]", "BODY.PEEK[TEXT]"])
             except Exception as exc:
                 LOG.warning("Fetch failed in folder %s: %s", folder_id, exc)
                 err_count += len(batch)
@@ -495,9 +499,14 @@ class SyncEngine:
                             {"content_hash": content_hash}, folder_id, uid)
                         dedup_count += 1
                     else:
-                        parsed = parse_message(raw, content_hash)
-                        self._write_files(raw, parsed)
-                        self.db.insert_message(parsed, folder_id, uid)
+                        if self.with_attachments:
+                            parsed = parse_message(raw, content_hash)
+                            self._write_files(raw, parsed)
+                            self.db.insert_message(parsed, folder_id, uid)
+                        else:
+                            parsed = self._parse_partial(fetched, uid, content_hash)
+                            self._write_files(raw, parsed)
+                            self.db.insert_message(parsed, folder_id, uid)
                         new_count += 1
                 except Exception as exc:
                     LOG.warning("Failed to process UID %s: %s", uid, exc)
@@ -534,3 +543,100 @@ class SyncEngine:
             if not os.path.exists(att_path):
                 with open(att_path, "wb") as fh:
                     fh.write(content)
+
+    def _parse_partial(self, fetched, uid: int, content_hash: str) -> dict:
+        """Parse message without attachment payloads using BODYSTRUCTURE + selective parts."""
+        entry = fetched.get(uid)
+        if not entry or not isinstance(entry, dict):
+            return {"content_hash": content_hash}
+        bodystruct = entry.get(b"BODYSTRUCTURE") or entry.get("BODYSTRUCTURE")
+        header_bytes = entry.get(b"BODY.PEEK[HEADER]") or entry.get("BODY.PEEK[HEADER]")
+        text_bytes = entry.get(b"BODY.PEEK[TEXT]") or entry.get("BODY.PEEK[TEXT]")
+        # Parse headers
+        import email, email.utils, datetime as dt
+        msg = email.message_from_bytes(header_bytes or b"", policy=email.policy.default)
+        message_id = (msg.get("Message-ID") or "").strip()
+        subject = (msg.get("Subject") or "").strip()
+        from_list = email.utils.getaddresses([(msg.get("From") or "").strip()])
+        sender_name, sender_email = ("", "")
+        if from_list and from_list[0][1]:
+            sender_name = from_list[0][0] or ""
+            sender_email = from_list[0][1].lower()
+        date_ts, date_utc = None, None
+        raw_date = (msg.get("Date") or "").strip()
+        if raw_date:
+            try:
+                parsed = email.utils.parsedate_to_datetime(raw_date)
+                if parsed is not None:
+                    if parsed.tzinfo is None:
+                        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+                    date_utc = parsed.astimezone(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                    date_ts = int(parsed.timestamp())
+            except (TypeError, ValueError):
+                pass
+        plain_body = ""
+        if text_bytes:
+            try:
+                plain_body = text_bytes.decode("utf-8", "replace")
+            except Exception:
+                plain_body = ""
+        # Recipients
+        recipients = []
+        for rtype, header in (("to", "To"), ("cc", "Cc"), ("bcc", "Bcc")):
+            for name, addr in email.utils.getaddresses([(msg.get(header) or "").strip()]):
+                if addr:
+                    recipients.append({"type": rtype, "name": name or "", "email": addr.lower()})
+        # Attachment metadata from BODYSTRUCTURE
+        attachments = []
+        if bodystruct:
+            self._collect_attachment_meta(bodystruct, attachments)
+        return {
+            "content_hash": content_hash,
+            "message_id": message_id,
+            "date_utc": date_utc,
+            "date_ts": date_ts,
+            "sender_name": sender_name,
+            "sender_email": sender_email,
+            "subject": subject,
+            "plain_body": plain_body,
+            "html_body": "",
+            "size": 0,  # size unknown without full message
+            "eml_relpath": storage.eml_relpath_for(content_hash),
+            "recipients": recipients,
+            "attachments": attachments,
+            "complete": False,
+        }
+
+    def _collect_attachment_meta(self, part, out, idx=[0]):
+        """Recursively collect attachment metadata from BODYSTRUCTURE."""
+        # part is a list/tuple from IMAPClient: [type, subtype, params, id, desc, enc, size, ...]
+        if not isinstance(part, (list, tuple)):
+            return
+        if len(part) >= 2 and isinstance(part[0], str) and isinstance(part[1], str):
+            # leaf part: [type, subtype, params, ...]
+            ctype = (part[0] + "/" + part[1]).lower()
+            params = part[2] if len(part) > 2 and isinstance(part[2], list) else []
+            disposition = "attachment"
+            filename = None
+            for p in params:
+                if isinstance(p, (list, tuple)) and len(p) == 2:
+                    if p[0].lower() == "name":
+                        filename = p[1]
+                    if p[0].lower() == "content-disposition":
+                        disposition = p[1].lower()
+            if filename or disposition == "attachment" or ctype.startswith("application/") or \
+                    ctype.startswith("image/") or ctype.startswith("audio/") or \
+                    ctype.startswith("video/") or "octet-stream" in ctype:
+                size = part[6] if len(part) > 6 and isinstance(part[6], int) else 0
+                safe = storage.safe_filename(filename or (ctype.split("/")[-1] or "attachment"))
+                idx[0] += 1
+                out.append({
+                    "filename": filename or safe,
+                    "filename_safe": f"{idx[0]:03d}-{safe}",
+                    "size": size,
+                    "mime_type": ctype,
+                    "relpath": "",
+                })
+            return
+        for sub in part:
+            self._collect_attachment_meta(sub, out, idx)

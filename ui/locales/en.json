@@ -144,7 +144,9 @@
     "statusIncomplete": "Completed with errors",
     "statusCancelled": "Cancelled",
     "statusError": "Failed",
-    "syncActiveExit": "Synchronization is still running. Exit anyway? Progress will be saved and the next sync resumes from the checkpoint."
+    "syncActiveExit": "Synchronization is still running. Exit anyway? Progress will be saved and the next sync resumes from the checkpoint.",
+    "attachModeWith": "Download emails with attachments",
+    "attachModeWithout": "Download emails without attachments"
   },
 
   "report": {
@@ -242,6 +244,28 @@
     "messages": "messages •",
     "contacts": "contacts •",
     "organizations": "organizations"
+  },
+
+  "update": {
+    "title": "Update Available",
+    "body": "A new version of MailDaan is available.",
+    "version": "Version",
+    "releaseNotes": "Release Notes",
+    "download": "Download Update",
+    "dismiss": "Dismiss",
+    "downloading": "Downloading…",
+    "cancel": "Cancel",
+    "verify": "Verifying checksum…",
+    "verified": "Installer verified.",
+    "checksumFail": "Checksum verification failed.",
+    "checksumMissing": "Checksum not available — cannot install.",
+    "install": "Install Update",
+    "installing": "Installing…",
+    "checkNow": "Check for Updates",
+    "checking": "Checking…",
+    "upToDate": "You are up to date.",
+    "offline": "Update check unavailable (offline).",
+    "error": "Update check failed."
   },
 
   "common": {

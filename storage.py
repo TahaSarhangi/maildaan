@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS messages (
     search_all TEXT,
     size INTEGER,
     eml_relpath TEXT,
-    created_at TEXT
+    created_at TEXT,
+    complete INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS message_folders (
     message_id INTEGER NOT NULL,
@@ -205,6 +206,9 @@ class ArchiveDB:
                 if "search_all" not in cols:
                     self.conn.execute(
                         "ALTER TABLE messages ADD COLUMN search_all TEXT")
+                if "complete" not in cols:
+                    self.conn.execute(
+                        "ALTER TABLE messages ADD COLUMN complete INTEGER NOT NULL DEFAULT 1")
                 fts_ok = True
                 try:
                     self.conn.executescript(FTS_SQL)
@@ -360,12 +364,13 @@ class ArchiveDB:
                 """INSERT INTO messages
                    (content_hash, message_id, date_utc, date_ts, sender_name, sender_email,
                     subject, plain_body, html_body, search_norm, search_all, size,
-                    eml_relpath, created_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    eml_relpath, created_at, complete)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (msg["content_hash"], msg["message_id"], msg["date_utc"], msg["date_ts"],
                  msg["sender_name"], msg["sender_email"],
                  msg["subject"], msg["plain_body"], msg["html_body"], search_norm,
-                 search_all, msg["size"], msg["eml_relpath"], utc_now_iso()))
+                 search_all, msg["size"], msg["eml_relpath"], utc_now_iso(),
+                 1 if msg.get("complete", True) else 0))
             message_id = cur.lastrowid
             self.conn.execute(
                 "INSERT OR IGNORE INTO message_folders (message_id, folder_id, uid) VALUES (?,?,?)",
@@ -385,6 +390,41 @@ class ArchiveDB:
             self._update_contacts(msg)
             self.conn.commit()
             return True
+
+    def complete_message(self, partial_msg_id: int, msg: dict) -> bool:
+        """Upgrade a partial (no-attachment) message row with the full data.
+
+        Returns True when the row was upgraded, False when a complete row with
+        the same content_hash already exists (the partial row is dropped to
+        avoid duplicates). Existing full EML files are never overwritten.
+        """
+        with self._lock:
+            existing = self.conn.execute(
+                "SELECT id FROM messages WHERE content_hash=? AND complete=1",
+                (msg["content_hash"],)).fetchone()
+            if existing:
+                self.conn.execute("DELETE FROM messages WHERE id=?", (partial_msg_id,))
+                self.conn.commit()
+                return False
+            self.conn.execute(
+                "UPDATE messages SET content_hash=?, eml_relpath=?, size=?, complete=1 "
+                "WHERE id=?", (msg["content_hash"], msg["eml_relpath"],
+                               msg["size"], partial_msg_id))
+            self.conn.execute("DELETE FROM attachments WHERE message_id=?", (partial_msg_id,))
+            for att in msg.get("attachments", []):
+                self.conn.execute(
+                    "INSERT INTO attachments (message_id, filename, filename_safe, size, "
+                    "mime_type, relpath) VALUES (?,?,?,?,?,?)",
+                    (partial_msg_id, att["filename"], att["filename_safe"], att["size"],
+                     att["mime_type"], att["relpath"]))
+            self.conn.commit()
+            return True
+
+    def partial_messages(self):
+        """All messages archived without their attachment payloads."""
+        with self._lock:
+            return [dict(r) for r in self.conn.execute(
+                "SELECT id, content_hash FROM messages WHERE complete=0").fetchall()]
 
     def _update_contacts(self, msg: dict):
         now = msg["date_utc"] or utc_now_iso()
@@ -578,6 +618,7 @@ class ArchiveDB:
             msg["attachments"] = [dict(a) for a in self.conn.execute(
                 "SELECT id, filename, filename_safe, size, mime_type, relpath "
                 "FROM attachments WHERE message_id=?", (message_id,)).fetchall()]
+            msg["complete"] = bool(msg.get("complete", 1))
             return msg
 
     def message_attachment(self, message_id: int, attachment_id: int):

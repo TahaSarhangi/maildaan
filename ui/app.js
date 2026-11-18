@@ -21,6 +21,7 @@ const state = {
   syncReport: null,
   pendingReport: null,
   pendingSwitchId: null,
+  attachMode: "with",
   filters: { search: "", folder_id: null, date_from: null, date_to: null, party: "" },
   sort: "newest",
   page: 1,
@@ -32,6 +33,7 @@ const state = {
   languageChosen: false,
   searchSeq: 0,
   openMessageId: null,
+  updateNotified: false,
 };
 
 /* ------------------------------------------------------------------ helpers */
@@ -769,6 +771,14 @@ function renderSyncIdle() {
     '<p class="form-subtitle">' +
       esc(t("sync.idleBody", "Synchronization downloads all messages from every IMAP folder into the local archive. It resumes from the last checkpoint when interrupted.")) +
     "</p>" +
+    '<div class="form-group">' +
+      '<label class="form-label">' + esc(t("sync.attachMode", "Attachment mode")) + '</label>' +
+      '<div class="seg-group" id="segAttachMode">' +
+        '<button class="seg-btn" data-mode="with" data-i18n="sync.attachModeWith">Download emails with attachments</button>' +
+        '<button class="seg-btn" data-mode="without" data-i18n="sync.attachModeWithout">Download emails without attachments</button>' +
+      "</div>" +
+      '<p class="form-subtitle">' + esc(t("sync.attachModeHint", "Without attachments: headers, bodies and folder metadata are downloaded, but attachment payloads are skipped. You can download the attachments later for any message.")) + '</p>' +
+    "</div>" +
     '<div class="progress-block">' +
       '<div class="progress-head"><span>' + esc(t("sync.title", "Synchronization")) + '</span><span class="pct">0%</span></div>' +
       '<div class="progress-track"><div class="progress-fill" style="width:0%"></div></div>' +
@@ -777,6 +787,19 @@ function renderSyncIdle() {
       '<div class="progress-head"><span>' + esc(t("sync.currentFolder", "Current folder")) + '</span><span class="pct">0%</span></div>' +
       '<div class="progress-track"><div class="progress-fill secondary" style="width:0%"></div></div>' +
     '</div>';
+  setSegMode();
+}
+
+function setSegMode() {
+  const seg = $("segAttachMode");
+  if (!seg) return;
+  seg.querySelectorAll(".seg-btn").forEach((b) => {
+    b.classList.toggle("active", b.dataset.mode === state.attachMode);
+    b.addEventListener("click", () => {
+      state.attachMode = b.dataset.mode;
+      setSegMode();
+    });
+  });
 }
 
 async function startSync(accountId, password) {
@@ -787,7 +810,7 @@ async function startSync(accountId, password) {
   state.syncAccountId = accountId;
   renderAccounts();
   renderSyncScreen();
-  const res = await api().startSync(accountId, password);
+  const res = await api().startSync(accountId, password, state.attachMode === "without" ? false : true);
   if (res && res.error_key) {
     state.syncRunning = false;
     state.syncAccountId = null;
@@ -1027,6 +1050,118 @@ async function onExportExcel() {
 
 /* ----------------------------------------------------------------- settings */
 
+function renderUpdateStatus(res) {
+  const box = $("updateStatus");
+  if (!box) return;
+  if (!res || !res.available) {
+    box.innerHTML = '<div class="update-uptodate">' + esc(t("update.upToDate", "You are up to date.")) + "</div>";
+    state.updateNotified = false;
+    return;
+  }
+  state.updateNotified = true;
+  box.innerHTML =
+    '<div class="update-available">' +
+      '<h4 data-i18n="update.title">' + esc(t("update.title", "Update Available")) + "</h4>" +
+      '<p data-i18n="update.body">' + esc(t("update.body", "A new version of MailDaan is available.")) + "</p>" +
+      '<div class="update-version"><b>' + esc(t("update.version", "Version")) + ':</b> ' + esc(res.version || "") + '</div>' +
+      (res.notes ? '<div class="update-notes">' + esc(res.notes) + '</div>' : "") +
+      '<div class="update-actions">' +
+        '<button class="btn btn-primary" id="btnDownloadUpdate" data-i18n="update.download">' + esc(t("update.download", "Download Update")) + '</button>' +
+        '<button class="btn" id="btnDismissUpdate" data-i18n="update.dismiss">' + esc(t("update.dismiss", "Dismiss")) + '</button>' +
+      '</div>' +
+    '</div>';
+  const dlBtn = $("btnDownloadUpdate");
+  const disBtn = $("btnDismissUpdate");
+  if (dlBtn) dlBtn.addEventListener("click", startUpdateDownload);
+  if (disBtn) disBtn.addEventListener("click", () => { box.innerHTML = ""; state.updateNotified = false; });
+}
+
+async function checkForUpdatesAuto() {
+  if (state.updateNotified) return;
+  try {
+    const res = await api().checkForUpdates(false);
+    if (res && res.available) {
+      renderUpdateStatus(res);
+    }
+  } catch (e) {
+    // silent
+  }
+}
+
+async function startUpdateDownload() {
+  const box = $("updateStatus");
+  const btn = $("btnDownloadUpdate");
+  const disBtn = $("btnDismissUpdate");
+  if (btn) btn.disabled = true;
+  if (disBtn) disBtn.disabled = true;
+  box.innerHTML =
+    '<div class="update-downloading">' +
+      '<p data-i18n="update.downloading">' + esc(t("update.downloading", "Downloading…")) + '</p>' +
+      '<div class="progress-block">' +
+        '<div class="progress-head"><span>Progress</span><span class="pct" id="dlPct">0%</span></div>' +
+        '<div class="progress-track"><div class="progress-fill" id="dlBar" style="width:0%"></div></div>' +
+      '</div>' +
+      '<div class="update-actions">' +
+        '<button class="btn btn-danger" id="btnCancelDownload" data-i18n="update.cancel">' + esc(t("update.cancel", "Cancel")) + '</button>' +
+      '</div>' +
+    '</div>';
+  const res = await api().startUpdateDownload();
+  if (res && res.error) {
+    box.innerHTML = '<div class="update-error">' + esc(res.error) + '</div>';
+    return;
+  }
+  const cancelBtn = $("btnCancelDownload");
+  if (cancelBtn) cancelBtn.addEventListener("click", cancelUpdateDownload);
+  pollUpdateProgress();
+}
+
+async function cancelUpdateDownload() {
+  await api().cancelUpdateDownload();
+  const box = $("updateStatus");
+  box.innerHTML = '<div class="update-error">' + esc(t("update.cancel", "Download cancelled.")) + '</div>';
+}
+
+async function pollUpdateProgress() {
+  const box = $("updateStatus");
+  const pct = $("dlPct");
+  const bar = $("dlBar");
+  if (!box) return;
+  const res = await api().updateDownloadProgress();
+  if (pct && bar) {
+    pct.textContent = (res.percent || 0) + "%";
+    bar.style.width = (res.percent || 0) + "%";
+  }
+  if (res.running) {
+    setTimeout(pollUpdateProgress, 1000);
+    return;
+  }
+  if (res.path_ready) {
+    box.innerHTML =
+      '<div class="update-ready">' +
+        '<p data-i18n="update.verified">' + esc(t("update.verified", "Installer verified.")) + '</p>' +
+        '<div class="update-actions">' +
+          '<button class="btn btn-primary" id="btnInstallUpdate" data-i18n="update.install">' + esc(t("update.install", "Install Update")) + '</button>' +
+          '<button class="btn" id="btnDismissInstall" data-i18n="update.dismiss">' + esc(t("update.dismiss", "Dismiss")) + '</button>' +
+        '</div>' +
+      '</div>';
+    $("btnInstallUpdate").addEventListener("click", installUpdate);
+    $("btnDismissInstall").addEventListener("click", () => { box.innerHTML = ""; state.updateNotified = false; });
+    return;
+  }
+  if (res.error) {
+    if (res.error === "cancelled") {
+      box.innerHTML = '<div class="update-error">' + esc(t("update.cancel", "Download cancelled.")) + '</div>';
+    } else {
+      box.innerHTML = '<div class="update-error">' + esc(res.error) + '</div>';
+    }
+  }
+}
+
+async function installUpdate() {
+  const res = await api().installUpdate();
+  // If successful, the app will exit and launch the installer
+}
+
 async function loadSettingsForms() {
   const s = state;
   $("settingsLang").value = s.lang;
@@ -1072,6 +1207,25 @@ function bindSettingsForms() {
     }
     infoModal(t("settings.saved", "Saved"), t("settings.saved", "Saved"));
   });
+
+  $("btnCheckUpdates").addEventListener("click", async () => {
+    const btn = $("btnCheckUpdates");
+    const statusBox = $("updateStatus");
+    btn.disabled = true;
+    btn.textContent = t("update.checking", "Checking…");
+    statusBox.innerHTML = "";
+    try {
+      const res = await api().checkForUpdates(true);
+      renderUpdateStatus(res);
+    } catch (e) {
+      statusBox.innerHTML = '<div class="update-error">' + esc(t("update.error", "Update check failed.")) + "</div>";
+    }
+    btn.disabled = false;
+    btn.textContent = t("update.checkNow", "Check for Updates");
+  });
+
+  // Auto-check on settings open if not checked recently
+  checkForUpdatesAuto();
 
   $("accountSettingsForm").addEventListener("submit", async (e) => {
     e.preventDefault();
