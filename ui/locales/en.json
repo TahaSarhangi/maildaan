@@ -222,7 +222,9 @@
     "noSubject": "(No subject)",
     "notFound": "Message not found.",
     "htmlNotice": "This message has no plain-text part. Displayed from original HTML with scripts and remote content disabled.",
-    "folders": "Folders"
+    "folders": "Folders",
+    "downloadMissingAttachments": "Download missing attachments",
+    "missingDownloaded": "Downloaded attachments for {n} message(s)."
   },
 
   "empty": {

@@ -529,8 +529,13 @@ class AppApi:
         return {"path": target}
 
     @requires_unlock
-    def downloadMissingAttachments(self, message_ids):
-        """Download attachment payloads for previously skipped messages."""
+    def downloadMissingAttachments(self, message_ids, password=None):
+        """Download attachment payloads for previously skipped messages.
+
+        Fetches the full RFC822 message for each partial row from IMAP,
+        upgrades the row with attachment metadata and payload files, and
+        drops duplicate rows that already have a complete copy.
+        """
         account, paths = self._active_paths()
         if account is None:
             return {"error_key": "common.saveFailed"}
@@ -541,19 +546,54 @@ class AppApi:
         port = account.get("imap_port") or 993
         if not host or not username:
             return {"error_key": "config.fillAllFields"}
-        # We need the password - will be handled by a modal in UI
+        if not password:
+            return {"error_key": "config.fillAllFields"}
         completed = 0
-        for msg_id in message_ids:
-            # Check if already complete
+        try:
+            import imap_sync
+            import imaptls
+            engine = imap_sync.SyncEngine(
+                host, port, username, password, imap_sync.SyncState(),
+                threading.Event(), db_path=paths["db"], data_dir=paths["root"],
+                account_id=account.get("id", ""),
+                account_email=account.get("email") or "",
+                account=account, with_attachments=True)
+            engine.db = storage.ArchiveDB(paths["db"])
+            # Find folder+UID for each partial message
             with storage.ArchiveDB(paths["db"]) as db:
-                msg = db.get_message(int(msg_id))
-            if msg and msg.get("complete"):
-                continue
-            # Fetch the full message from IMAP
-            # We need to find the UID for this message
-            # This requires the user's password - ideally we'd ask for it
-            # For now, skip and let the user re-sync with attachments
-            pass
+                rows = [dict(r) for r in db.conn.execute(
+                    "SELECT mf.folder_id, mf.uid, m.content_hash "
+                    "FROM message_folders mf JOIN messages m ON m.id=mf.message_id "
+                    "WHERE m.complete=0 AND mf.message_id IN (%s)"
+                    % ",".join("?" * len(message_ids)),
+                    [int(mid) for mid in message_ids]).fetchall()]
+            client = engine._connect()
+            try:
+                for row in rows:
+                    try:
+                        client.select_folder(
+                            engine._folder_imap_name(row["folder_id"]))
+                        fetched = client.fetch([row["uid"]], ["BODY.PEEK[]"])
+                        raw = engine._extract_raw(fetched, row["uid"])
+                        if not raw:
+                            continue
+                        content_hash = hashlib.sha256(raw).hexdigest()
+                        parsed = imap_sync.parse_message(raw, content_hash)
+                        engine._write_files(raw, parsed)
+                        with storage.ArchiveDB(paths["db"]) as db:
+                            if db.complete_message(row["message_id"] if "message_id" in row else 0, parsed):
+                                completed += 1
+                    except Exception as exc:
+                        LOG.warning("attachment download failed for uid %s: %s",
+                                    row.get("uid"), exc)
+            finally:
+                try:
+                    client.logout()
+                except Exception:
+                    pass
+        except Exception as exc:
+            LOG.error("attachment download failed\n%s", traceback.format_exc())
+            return {"error": str(exc)}
         return {"ok": True, "completed": completed}
 
     # --------------------------------------------------------------- export

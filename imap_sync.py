@@ -248,6 +248,15 @@ class SyncEngine:
         base = imap_name.split(delimiter)[-1] if delimiter else imap_name
         return base.strip() or imap_name
 
+    def _folder_imap_name(self, folder_id: int) -> str:
+        """Look up the raw IMAP folder name for a folder id."""
+        if not self.db:
+            return "INBOX"
+        with self.db._lock:
+            row = self.db.conn.execute(
+                "SELECT imap_name FROM folders WHERE id=?", (folder_id,)).fetchone()
+        return row["imap_name"] if row else "INBOX"
+
     def _connect(self) -> IMAPClient:
         """Connect over TLS and log in, using this account's trust settings."""
         try:

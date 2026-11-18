@@ -659,12 +659,21 @@ async function openMessage(id) {
   $("detailEmpty").classList.add("hidden");
   const content = $("detailContent");
   content.classList.remove("hidden");
-  content.innerHTML =
-    '<div class="detail-card">' +
+  let actionsHtml =
     '<div class="detail-actions">' +
     '<button class="btn btn-primary small" id="btnSaveEml">' + icon("file") +
       esc(t("viewer.saveEml", "Save original message (.eml)")) + "</button>" +
-    "</div>" +
+    "</div>";
+  if (m.attachments && m.attachments.length && m.complete === false) {
+    actionsHtml +=
+      '<div class="detail-actions">' +
+      '<button class="btn small" id="btnDownloadMissingAtt">' + icon("download") +
+        esc(t("viewer.downloadMissingAttachments", "Download missing attachments")) + "</button>" +
+      "</div>";
+  }
+  content.innerHTML =
+    '<div class="detail-card">' +
+    actionsHtml +
     '<h2 class="detail-subject" dir="auto">' + esc(subject) + "</h2>" +
     '<dl class="detail-meta">' + meta + "</dl>" + bodyHtml + attHtml +
     "</div>";
@@ -674,6 +683,8 @@ async function openMessage(id) {
   const saveAll = $("btnSaveAllAtt");
   if (saveAll) saveAll.addEventListener("click", () =>
     api().saveAllAttachments(id).then((r) => fileResult(r)));
+  const dlMissing = $("btnDownloadMissingAtt");
+  if (dlMissing) dlMissing.addEventListener("click", () => downloadMissingAttachments([id]));
   $("btnSaveEml").addEventListener("click", () => api().saveEml(id).then((r) => fileResult(r)));
 }
 
@@ -694,6 +705,26 @@ function sanitizeHtml(html) {
 
 async function saveAttachment(messageId, attachmentId) {
   fileResult(await api().saveAttachment(messageId, attachmentId));
+}
+
+async function downloadMissingAttachments(messageIds) {
+  const s = state;
+  if (s.syncRunning) {
+    errorModal({error_key: "sync.statusRunning"});
+    return;
+  }
+  const account = activeAccount();
+  if (!account) return;
+  await askPassword(
+    t("sync.title", "Synchronization"),
+    esc(t("config.password", "Password")) + " — <b>" + esc(account.email) + "</b>",
+    async (pw) => {
+      const res = await api().downloadMissingAttachments(messageIds, pw);
+      if (res && res.error_key) { errorModal(res); return; }
+      if (res && res.error) { infoModal(t("common.error", "Error"), res.error); return; }
+      infoModal(t("common.ok", "OK"), t("viewer.missingDownloaded", "Downloaded attachments for {n} message(s).").replace("{n}", res.completed || 0));
+      if (state.openMessageId) openMessage(state.openMessageId);
+    });
 }
 
 function fileResult(r) {

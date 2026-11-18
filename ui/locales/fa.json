@@ -222,7 +222,9 @@
     "noSubject": "(بدون موضوع)",
     "notFound": "پیام یافت نشد.",
     "htmlNotice": "این پیام بخش متنی ساده ندارد. از روی HTML اصلی با اسکریپت‌ها و محتوای Remote غیرفعال نمایش داده می‌شود.",
-    "folders": "پوشه‌ها"
+    "folders": "پوشه‌ها",
+    "downloadMissingAttachments": "دانلود پیوست‌های گم‌شده",
+    "missingDownloaded": "پیوست‌های {n} پیام دانلود شد."
   },
 
   "empty": {
