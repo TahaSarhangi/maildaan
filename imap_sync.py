@@ -47,6 +47,80 @@ def _decode_header(value) -> str:
     return str(value).strip()
 
 
+# Content types treated as the readable message body (see _body_sections).
+BODY_TYPES = ("text/plain", "text/html")
+
+
+def _struct_text(value) -> str:
+    """Lowercase an IMAPClient BODYSTRUCTURE atom (bytes or str)."""
+    if isinstance(value, bytes):
+        return value.decode("ascii", "replace").lower()
+    if isinstance(value, str):
+        return value.lower()
+    return ""
+
+
+def _param_lookup(params, key: str) -> str:
+    """Read one parameter from an RFC 3501 body-fld-param list.
+
+    IMAPClient flattens it to ``(key, value, key, value, ...)``; a list of
+    explicit pairs is accepted as well.
+    """
+    if not isinstance(params, (list, tuple)):
+        return ""
+    items = list(params)
+    if items and isinstance(items[0], (list, tuple)):  # pairs form
+        for pair in items:
+            if isinstance(pair, (list, tuple)) and len(pair) == 2 \
+                    and _struct_text(pair[0]) == key:
+                return _struct_text(pair[1])
+        return ""
+    for i in range(0, len(items) - 1, 2):
+        if _struct_text(items[i]) == key:
+            return _struct_text(items[i + 1])
+    return ""
+
+
+def _part_info(part):
+    """(ctype, filename, disposition) of a BODYSTRUCTURE leaf part.
+
+    IMAPClient exposes the RFC 3501 body structure fields as bytes. The
+    media type lives at indexes 0/1, the parameters at index 2 (including a
+    ``name`` on Content-Type) and the disposition at index 8, holding the
+    tuple ("ATTACHMENT" ("FILENAME" ...)) for attachments. str values are
+    accepted too so the classification is robust to either encoding.
+    """
+    ctype = ""
+    if len(part) > 1:
+        ctype = _struct_text(part[0]) + "/" + _struct_text(part[1])
+    filename = disposition = ""
+    params = part[2] if len(part) > 2 and isinstance(part[2], (list, tuple)) else ()
+    filename = _param_lookup(params, "name")
+    disp = part[8] if len(part) > 8 else None
+    if isinstance(disp, (list, tuple)) and disp:
+        disposition = _struct_text(disp[0])
+        if not filename:
+            filename = _param_lookup(
+                disp[1] if len(disp) > 1 and isinstance(disp[1], (list, tuple)) else (),
+                "filename")
+    return ctype, filename, disposition
+
+
+def _is_attachment_part(ctype: str, filename: str, disposition: str) -> bool:
+    """Whether a MIME part's payload must be left unfetched.
+
+    Mirrors the attachment test in parse_message(), so body parts and
+    attachments are classified identically everywhere. Note this catches
+    text-based attachments too (a text/plain section carrying
+    ``name=notes.txt`` or Content-Disposition: attachment).
+    """
+    if filename or disposition == "attachment":
+        return True
+    return (ctype.startswith("application/") or ctype.startswith("image/")
+            or ctype.startswith("audio/") or ctype.startswith("video/")
+            or "octet-stream" in ctype)
+
+
 def parse_message(raw: bytes, content_hash: str) -> dict:
     """Parse raw MIME bytes into an archive record (no files written here)."""
     msg = email.message_from_bytes(raw, policy=email.policy.default)
@@ -302,6 +376,16 @@ class SyncEngine:
             for key in (b"BODY[]", b"RFC822"):
                 if key in entry:
                     return entry[key]
+            # A no-attachment fetch (BODYSTRUCTURE + BODY[HEADER] + the
+            # numbered BODY[<section>] parts) carries no BODY[] entry. The
+            # header block identifies the message: it backs the placeholder
+            # EML and the content hash replaced later by completion.
+            header = entry.get(b"BODY[HEADER]") or entry.get(b"BODY.PEEK[HEADER]")
+            if header:
+                return bytes(header)
+            for value in entry.values():
+                if isinstance(value, (bytes, bytearray)):
+                    return bytes(value)
         return None
 
     # ------------------------------------------------------------------- main
@@ -485,8 +569,15 @@ class SyncEngine:
             try:
                 if self.with_attachments:
                     fetched = client.fetch(batch, ["BODY.PEEK[]"])
+                    body_plans = None
                 else:
-                    fetched = client.fetch(batch, ["BODYSTRUCTURE", "BODY.PEEK[HEADER]", "BODY.PEEK[TEXT]"])
+                    # NOTE: BODY.PEEK[TEXT] is deliberately NOT requested. For a
+                    # multipart message it resolves to the *first* MIME section,
+                    # which is an attachment for many real-world messages. Instead
+                    # BODYSTRUCTURE is read first and only the numbered sections
+                    # that are actually readable body parts are fetched below.
+                    fetched = client.fetch(batch, ["BODYSTRUCTURE", "BODY.PEEK[HEADER]"])
+                    body_plans = self._fetch_body_sections(client, batch, fetched)
             except Exception as exc:
                 LOG.warning("Fetch failed in folder %s: %s", folder_id, exc)
                 err_count += len(batch)
@@ -513,7 +604,9 @@ class SyncEngine:
                             self._write_files(raw, parsed)
                             self.db.insert_message(parsed, folder_id, uid)
                         else:
-                            parsed = self._parse_partial(fetched, uid, content_hash)
+                            parsed = self._parse_partial(
+                                fetched, uid, content_hash,
+                                body_plans.get(uid, {}) if body_plans else {})
                             self._write_files(raw, parsed)
                             self.db.insert_message(parsed, folder_id, uid)
                         new_count += 1
@@ -553,14 +646,72 @@ class SyncEngine:
                 with open(att_path, "wb") as fh:
                     fh.write(content)
 
-    def _parse_partial(self, fetched, uid: int, content_hash: str) -> dict:
-        """Parse message without attachment payloads using BODYSTRUCTURE + selective parts."""
+    def _fetch_body_sections(self, client, uids, fetched) -> dict:
+        """Fetch the readable text sections named by BODYSTRUCTURE.
+
+        Returns ``{uid: {section: content_type}}``. Messages sharing a layout
+        are fetched with one command. Attachment sections are never requested,
+        so their payloads stay on the server until a later completion pass.
+        """
+        plans, groups = {}, {}
+        for uid in uids:
+            entry = fetched.get(uid)
+            bodystruct = entry.get(b"BODYSTRUCTURE") if isinstance(entry, dict) else None
+            plan = dict(self._body_sections(bodystruct)) if bodystruct is not None else {}
+            plans[uid] = plan
+            groups.setdefault(tuple(sorted(plan)), []).append(uid)
+        for sections, group in groups.items():
+            if not sections:
+                continue
+            # Merge per message: dict.update() would drop the BODYSTRUCTURE
+            # and BODY[HEADER] entries already fetched for these messages.
+            fetched_parts = client.fetch(
+                group, ["BODY.PEEK[%s]" % s for s in sections])
+            for uid, entry in fetched_parts.items():
+                if isinstance(entry, dict):
+                    fetched.setdefault(uid, {}).update(entry)
+        return plans
+
+    def _body_sections(self, bodystruct) -> list:
+        """Sections of the readable body parts of a message.
+
+        Walks the BODYSTRUCTURE tree and returns ``(section, content_type)``
+        pairs for the text parts a user would read, using the IMAP section
+        numbering ("1", "2.1", ...). A non-multipart message has no numbered
+        sections, so its single part is addressed with the plain ``TEXT``
+        specifier (attachments cannot hide in a single-part message).
+        """
+        sections = []
+        self._collect_body_sections(bodystruct, "", sections)
+        return sections
+
+    def _collect_body_sections(self, part, prefix, out):
+        if not isinstance(part, (list, tuple)) or not part:
+            return
+        if isinstance(part[0], (list, tuple)):
+            # Multipart container: recurse into the numbered child parts.
+            for index, child in enumerate(part[0], start=1):
+                child_prefix = ("%s.%d" % (prefix, index)) if prefix else str(index)
+                self._collect_body_sections(child, child_prefix, out)
+            return
+        ctype, filename, disposition = _part_info(part)
+        if ctype in BODY_TYPES and not _is_attachment_part(ctype, filename, disposition):
+            out.append((prefix or "TEXT", ctype))
+
+    def _parse_partial(self, fetched, uid: int, content_hash: str,
+                       sections: dict = None) -> dict:
+        """Parse message without attachment payloads.
+
+        Headers come from BODY[HEADER]; the bodies come from the numbered
+        BODY[<section>] parts selected by _fetch_body_sections(), so no
+        attachment payload is ever read. Attachment metadata comes from
+        BODYSTRUCTURE only.
+        """
         entry = fetched.get(uid)
         if not entry or not isinstance(entry, dict):
             return {"content_hash": content_hash}
         bodystruct = entry.get(b"BODYSTRUCTURE") or entry.get("BODYSTRUCTURE")
-        header_bytes = entry.get(b"BODY.PEEK[HEADER]") or entry.get("BODY.PEEK[HEADER]")
-        text_bytes = entry.get(b"BODY.PEEK[TEXT]") or entry.get("BODY.PEEK[TEXT]")
+        header_bytes = entry.get(b"BODY[HEADER]") or entry.get("BODY.PEEK[HEADER]")
         # Parse headers
         import email, email.utils, datetime as dt
         msg = email.message_from_bytes(header_bytes or b"", policy=email.policy.default)
@@ -583,12 +734,19 @@ class SyncEngine:
                     date_ts = int(parsed.timestamp())
             except (TypeError, ValueError):
                 pass
-        plain_body = ""
-        if text_bytes:
-            try:
-                plain_body = text_bytes.decode("utf-8", "replace")
-            except Exception:
-                plain_body = ""
+        plain_parts, html_parts = [], []
+        for section, ctype in (sections or {}).items():
+            key = ("BODY[%s]" % section).encode("ascii", "replace")
+            data = entry.get(key) or entry.get(
+                b"BODY.PEEK[" + section.encode("ascii", "replace") + b"]")
+            if not data:
+                continue
+            text = data.decode("utf-8", "replace")
+            (html_parts if ctype == "text/html" else plain_parts).append(text)
+        plain_body = "\n".join(p for p in plain_parts if p and p.strip())
+        html_body = "\n".join(h for h in html_parts if h and h.strip())
+        if not plain_body and html_body:
+            plain_body = html_to_text(html_body)
         # Recipients
         recipients = []
         for rtype, header in (("to", "To"), ("cc", "Cc"), ("bcc", "Bcc")):
@@ -608,7 +766,7 @@ class SyncEngine:
             "sender_email": sender_email,
             "subject": subject,
             "plain_body": plain_body,
-            "html_body": "",
+            "html_body": html_body,
             "size": 0,  # size unknown without full message
             "eml_relpath": storage.eml_relpath_for(content_hash),
             "recipients": recipients,
@@ -616,28 +774,22 @@ class SyncEngine:
             "complete": False,
         }
 
-    def _collect_attachment_meta(self, part, out, idx=[0]):
+    def _collect_attachment_meta(self, part, out, idx=None):
         """Recursively collect attachment metadata from BODYSTRUCTURE."""
-        # part is a list/tuple from IMAPClient: [type, subtype, params, id, desc, enc, size, ...]
+        # part is a list/tuple from IMAPClient: [type, subtype, params, id,
+        # desc, enc, size, md5, (disposition ...), ...]. Fields are bytes.
+        if idx is None:
+            idx = [0]
         if not isinstance(part, (list, tuple)):
             return
-        if len(part) >= 2 and isinstance(part[0], str) and isinstance(part[1], str):
-            # leaf part: [type, subtype, params, ...]
-            ctype = (part[0] + "/" + part[1]).lower()
-            params = part[2] if len(part) > 2 and isinstance(part[2], list) else []
-            disposition = "attachment"
-            filename = None
-            for p in params:
-                if isinstance(p, (list, tuple)) and len(p) == 2:
-                    if p[0].lower() == "name":
-                        filename = p[1]
-                    if p[0].lower() == "content-disposition":
-                        disposition = p[1].lower()
-            if filename or disposition == "attachment" or ctype.startswith("application/") or \
-                    ctype.startswith("image/") or ctype.startswith("audio/") or \
-                    ctype.startswith("video/") or "octet-stream" in ctype:
+        if len(part) >= 2 and isinstance(part[0], (bytes, str)) \
+                and isinstance(part[1], (bytes, str)):
+            # leaf part: [type, subtype, params, id, desc, enc, size, ...]
+            ctype, filename, disposition = _part_info(part)
+            if _is_attachment_part(ctype, filename, disposition):
                 size = part[6] if len(part) > 6 and isinstance(part[6], int) else 0
-                safe = storage.safe_filename(filename or (ctype.split("/")[-1] or "attachment"))
+                safe = storage.safe_filename(filename or
+                                             (ctype.split("/")[-1] or "attachment"))
                 idx[0] += 1
                 out.append({
                     "filename": filename or safe,
