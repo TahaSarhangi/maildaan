@@ -8,7 +8,7 @@ search and export your email — **completely offline**.
 **Language:** [English](README.md) · [فارسی (Persian)](README.fa.md)
 
 - **Developer:** Titanium — https://github.com/TahaSarhangi
-- **Version:** 1.1.3
+- **Version:** 1.2.0
 - **License:** MIT (see [LICENSE](LICENSE))
 
 ## Why MailDaan
@@ -32,6 +32,18 @@ Installing the application, and browsing or searching an existing archive, never
 - **Incremental synchronization** — IMAP `UID` + `UIDVALIDITY` checkpoints make every sync
   download only what is new. An interrupted sync resumes exactly where it stopped, and a
   failed batch never advances the checkpoint.
+- **Sync with or without attachments** — download a folder's messages first and fetch their
+  attachments later, on demand for one message or a whole selection at a time. MailDaan
+  never auto-downloads attachments you did not ask for.
+- **Built-in update manager** — the small update icon in the sidebar checks GitHub for new
+  releases, lights up a badge when one is available, shows the download as a circular
+  progress ring with a live percentage, verifies the installer against its published
+  SHA-256 checksum, and then asks explicitly before installing: **Install now** or
+  **Remind me later**. It never installs while a synchronization is running and never
+  cancels one without your consent.
+- **Clear bilingual errors** — every failure (connection, IMAP, certificate, export, …)
+  is reported as a concrete, human-readable message in Persian or English instead of a
+  raw technical error.
 - **Intelligent offline search** — a fast SQLite FTS5 index across senders, recipients,
   subjects and bodies, with Persian character normalization (ی/ي, ک/ك, diacritics, ZWNJ),
   keyboard-layout correction (typing a Persian word on an English layout still finds it,
@@ -62,7 +74,7 @@ Installing the application, and browsing or searching an existing archive, never
 
 ## Completely offline installer
 
-`MailDaan-Setup-1.1.3.exe` is a single, fully self-contained setup program:
+`MailDaan-Setup-1.2.0.exe` is a single, fully self-contained setup program:
 
 - It embeds the official **Microsoft Edge WebView2 Fixed Version Runtime (x64)** and uses
   that private copy, so setup **never installs, downloads or asks for** a system WebView2
@@ -86,10 +98,10 @@ Sandbox (no email account configured), so they contain no user data.
 
 ## Download and install
 
-1. Download **`MailDaan-Setup-1.1.3.exe`** from the
+1. Download **`MailDaan-Setup-1.2.0.exe`** from the
    [Releases](https://github.com/TahaSarhangi/maildaan/releases) page.
 2. Run it — no internet connection is required. Verify the download anytime against the
-   published `MailDaan-Setup-1.1.3.exe.sha256` checksum file.
+   published `MailDaan-Setup-1.2.0.exe.sha256` checksum file.
 3. Launch **MailDaan** from the Start Menu (an optional desktop shortcut is offered).
 
 Your archive is stored separately in `%LOCALAPPDATA%\MailDaan` and survives updates and
