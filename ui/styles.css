@@ -519,11 +519,34 @@ mark { background: var(--primary-soft); color: var(--primary);
 /* ------------------------------------------------- sidebar update control */
 .update-wrap { position: relative; display: flex; }
 .update-link {
-  width: 36px; min-height: 32px; padding: 0; justify-content: center;
+  width: 40px; min-height: 34px; padding: 0; justify-content: center;
   position: relative; color: var(--muted);
 }
 .update-link:hover { color: var(--primary); }
-.update-link .ic { width: 17px; height: 17px; }
+.update-link.ready { color: var(--success); }
+.update-glyph {
+  position: relative; width: 34px; height: 34px;
+  display: flex; align-items: center; justify-content: center;
+}
+.update-glyph .ic { width: 16px; height: 16px; position: relative; }
+/* Circular download progress drawn around the icon (ring + numeric
+   percentage in the center), only while a download is running. */
+.update-ring { position: absolute; inset: 0; width: 34px; height: 34px;
+  fill: none; transform: rotate(-90deg); }
+.update-ring-track { stroke: var(--surface-3); stroke-width: 2.5; }
+.update-ring-fill {
+  stroke: var(--primary); stroke-width: 2.5; stroke-linecap: round;
+  transition: stroke-dashoffset .25s linear;
+}
+.update-pct {
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 8.5px; font-weight: 700; line-height: 1;
+  color: var(--text); letter-spacing: -0.4px; unicode-bidi: plaintext;
+}
+.update-link:not(.downloading) .update-ring,
+.update-link:not(.downloading) .update-pct { display: none; }
+.update-link.downloading .update-ic { display: none; }
 .update-badge {
   position: absolute; top: 3px; inset-inline-end: 3px;
   width: 8px; height: 8px; border-radius: 50%;
@@ -532,12 +555,16 @@ mark { background: var(--primary-soft); color: var(--primary);
 }
 .update-badge.ready { background: var(--success); }
 
-/* Compact contextual update popover (ChatGPT-style). Anchored above the
-   sidebar's bottom section; inset-inline-start keeps it inside the sidebar
-   edge in both LTR and RTL layouts. */
+/* Update popover. position:fixed keeps it clear of the sidebar's own scroll
+   container; app.js computes its position from the update icon so it always
+   opens inward (toward the main content area), fully inside the window in
+   both LTR and RTL layouts. max-width/max-height plus internal scrolling
+   guarantee no clipped text, hidden buttons or cropped panels. */
 .update-popover {
-  position: absolute; bottom: calc(100% + 8px); inset-inline-start: 0;
-  width: 300px; z-index: 45;
+  position: fixed; z-index: 45;
+  width: 300px; max-width: calc(100vw - 20px);
+  max-height: calc(100vh - 20px);
+  overflow: auto;
   background: var(--surface); border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
   box-shadow: 0 12px 40px rgba(0, 0, 0, .28);

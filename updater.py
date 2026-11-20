@@ -151,8 +151,12 @@ class UpdateManager:
         if not self.download_path or not os.path.exists(self.download_path):
             return {"error": "installer not verified"}
         if self.api.sync_running():
-            self.api.cancelSync()
-            self.api.sync_thread.join(timeout=30)
+            # Never interrupt an active synchronization: an update is only
+            # applied with the user's explicit consent, and never while a
+            # backup is in progress. The verified installer stays cached so
+            # the user can install once the synchronization has finished or
+            # been cancelled.
+            return {"error_key": "update.syncRunning"}
         subprocess.Popen([self.download_path], close_fds=True)
         self.api.exitApp()
         return {"ok": True}

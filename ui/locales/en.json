@@ -238,9 +238,9 @@
     "notFound": "Message not found.",
     "htmlNotice": "This message has no plain-text part. Displayed from original HTML with scripts and remote content disabled.",
     "folders": "Folders",
-    "downloadMissingAttachments": "Download missing attachments",
+    "downloadAttachments": "Download Attachments",
     "missingDownloaded": "Downloaded attachments for {n} message(s).",
-    "attachmentMissing": "The attachment file is missing from the local archive. Use “Download missing attachments” to fetch it from the server again."
+    "attachmentMissing": "The attachment file is missing from the local archive. Use “Download Attachments” to fetch it from the server again."
   },
 
   "empty": {
@@ -292,7 +292,16 @@
     "newVersion": "Version {version} is available.",
     "offline": "Update check unavailable (offline).",
     "error": "Update check failed.",
-    "updateReady": "The update is downloaded and verified."
+    "updateReady": "The update is downloaded and verified.",
+    "readyTitle": "Update Ready",
+    "readyBody": "The update has been downloaded and its checksum verified. Would you like to install it now?",
+    "installNow": "Install Now",
+    "remindLater": "Remind Me Later",
+    "syncBlockedTitle": "Synchronization in progress",
+    "syncBlockedBody": "The update cannot be installed while an email synchronization is running, because MailDaan must close to apply it. Cancel the synchronization first, or install the update later.",
+    "cancelSyncAndInstall": "Cancel Sync & Install",
+    "cancellingSync": "Cancelling the synchronization… The verified update will be installed as soon as it is safe.",
+    "cancelFailed": "The synchronization is still running. The update stays ready — install it after the synchronization finishes."
   },
 
   "common": {

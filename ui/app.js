@@ -41,6 +41,7 @@ const state = {
     error: "",
     checked: false,        // at least one check has completed
     popoverOpen: false,
+    installPrompted: false, // one "install now / later" prompt per completed download
   },
 };
 
@@ -224,6 +225,7 @@ async function applyLanguage(lang) {
   }
   if (state.view === "sync") renderSyncScreen();
   if (state.view === "settings") loadSettingsForms();
+  if (state.update.popoverOpen) renderUpdatePopover();
   updateTopbar();
 }
 
@@ -738,10 +740,13 @@ async function openMessage(id) {
       esc(t("viewer.saveEml", "Save original message (.eml)")) + "</button>" +
     "</div>";
   if (m.attachments && m.attachments.length && m.complete === false) {
+    // Only partial rows (complete=0) that actually carry identified,
+    // undownloaded attachment metadata show the button; never complete
+    // rows and never messages without attachments.
     actionsHtml +=
       '<div class="detail-actions">' +
       '<button class="btn small" id="btnDownloadMissingAtt">' + icon("download") +
-        esc(t("viewer.downloadMissingAttachments", "Download missing attachments")) + "</button>" +
+        esc(t("viewer.downloadAttachments", "Download Attachments")) + "</button>" +
       "</div>";
   }
   content.innerHTML =
@@ -802,7 +807,15 @@ async function downloadMissingAttachments(messageIds) {
       if (reportError(res)) return;
       toast(esc(t("viewer.missingDownloaded",
         "Downloaded attachments for {n} message(s).")).replace("{n}", toDigits(res.completed || 0)), "success");
-      if (state.openMessageId) openMessage(state.openMessageId);
+      if (state.openMessageId != null) {
+        // Refresh the open message from its stored state: the row is now
+        // complete, so the button disappears immediately — no restart.
+        // (A partial row merged into an existing complete copy is dropped,
+        // in which case the detail pane simply returns to its empty state.)
+        const refreshed = await api().getMessage(state.openMessageId);
+        if (refreshed && !refreshed.error_key) openMessage(state.openMessageId);
+        else renderDetailEmpty();
+      }
     });
 }
 
@@ -1241,11 +1254,25 @@ function refreshUpdateChrome() {
   if (btn) {
     const u = state.update;
     btn.setAttribute("aria-expanded", u.popoverOpen ? "true" : "false");
+    // Icon-driven states on the sidebar icon itself:
+    //  available  -> download icon + badge dot
+    //  downloading-> circular ring progress with live percentage
+    //  ready      -> check icon (success) + green badge dot
+    const pct = Math.max(0, Math.min(100, Math.round(u.percent || 0)));
+    btn.classList.toggle("downloading", u.status === UPDATE.DOWNLOADING);
+    btn.classList.toggle("ready", u.status === UPDATE.READY);
+    const iconUse = $("updateIcon");
+    if (iconUse) iconUse.setAttribute("href", u.status === UPDATE.READY ? "#i-check" : "#i-download");
+    const ring = $("updateRingFill");
+    if (ring) ring.style.strokeDashoffset = String(100 - pct);
+    const pctNode = $("updatePct");
+    if (pctNode) pctNode.textContent = toDigits(pct) + "%";
     let title = t("update.checkNow", "Check for Updates");
     if (u.status === UPDATE.AVAILABLE)
       title = t("update.newVersion", "Version available").replace("{version}", u.version || "");
     else if (u.status === UPDATE.READY) title = t("update.install", "Install Update");
-    else if (u.status === UPDATE.DOWNLOADING) title = t("update.downloading", "Downloading…");
+    else if (u.status === UPDATE.DOWNLOADING)
+      title = t("update.downloading", "Downloading…") + " " + toDigits(pct) + "%";
     btn.title = title;
     btn.setAttribute("aria-label", title);
   }
@@ -1276,6 +1303,34 @@ function closeUpdatePopover() {
   state.update.popoverOpen = false;
   $("updatePopover").classList.add("hidden");
   refreshUpdateChrome();
+}
+
+/* Place the popover relative to the sidebar update icon so it is always
+   fully inside the application window: it opens upward from the icon and
+   extends inward toward the main content area (mirrored for RTL), with the
+   size clamped to the viewport. Runs synchronously before the first paint,
+   so there is no flicker. */
+function placeUpdatePopover() {
+  const box = $("updatePopover");
+  const btn = $("btnUpdate");
+  if (!box || !btn) return;
+  if (box.classList.contains("hidden")) return;
+  const margin = 10;
+  box.style.maxHeight = Math.max(160, window.innerHeight - 2 * margin) + "px";
+  const width = box.offsetWidth;
+  const height = box.offsetHeight;
+  const rect = btn.getBoundingClientRect();
+  // Vertical: open upward with a small gap; never above the top margin and
+  // never past the bottom margin (short windows fall back to covering the
+  // icon, which is harmless — the popover sits on top).
+  let top = rect.top - height - 8;
+  top = Math.max(margin, Math.min(top, window.innerHeight - margin - height));
+  // Horizontal: the popover's leading edge aligns with the icon's leading
+  // edge and it extends inward toward the main content area.
+  let left = state.lang === "fa" ? rect.right - width : rect.left;
+  left = Math.max(margin, Math.min(left, window.innerWidth - margin - width));
+  box.style.left = left + "px";
+  box.style.top = top + "px";
 }
 
 /* Translate the updater's stable error strings. */
@@ -1372,8 +1427,11 @@ function renderUpdatePopover() {
   bind("updRetry", () => updateCheck(true));
   bind("updDownload", updateDownload);
   bind("updCancel", updateCancel);
-  bind("updInstall", updateInstall);
+  bind("updInstall", attemptUpdateInstall);
   bind("updClose", closeUpdatePopover);
+  // Re-anchor after every content change: the popover's height depends on
+  // its state and must stay fully inside the window.
+  placeUpdatePopover();
 }
 
 /* Automatic check shortly after boot: only lights the sidebar badge. */
@@ -1420,6 +1478,7 @@ async function updateCheck(force) {
 async function updateDownload() {
   state.update.status = UPDATE.DOWNLOADING;
   state.update.percent = 0;
+  state.update.installPrompted = false;
   refreshUpdateChrome();
   if (state.update.popoverOpen) renderUpdatePopover();
   let res = null;
@@ -1460,6 +1519,7 @@ async function refreshUpdateProgress() {
       state.update.percent = 100;
       refreshUpdateChrome();
       if (state.update.popoverOpen) renderUpdatePopover();
+      promptInstallUpdate();
     }
     return;
   }
@@ -1506,8 +1566,7 @@ async function pollUpdateProgress() {
     state.update.percent = 100;
     refreshUpdateChrome();
     if (state.update.popoverOpen) renderUpdatePopover();
-    else if (!wasReady) toast("<div>" + esc(t("update.updateReady",
-      "The update is downloaded and verified.")) + "</div>", "success");
+    if (!wasReady) promptInstallUpdate();
     return;
   }
   if (res.error) {
@@ -1519,11 +1578,100 @@ async function pollUpdateProgress() {
   }
 }
 
-async function updateInstall() {
+/* After the download has finished and the SHA-256 checksum has been
+   verified, the user is asked explicitly — the update is never installed
+   automatically. "Install now" checks that no synchronization is running
+   first; "Remind me later" keeps the verified installer cached and the icon
+   in its ready state, so the user can install from the popover later. */
+function promptInstallUpdate() {
+  if (state.update.installPrompted) return;
+  state.update.installPrompted = true;
+  showModal(
+    t("update.readyTitle", "Update Ready"),
+    '<p style="margin:0">' + esc(t("update.readyBody",
+      "The update has been downloaded and its checksum verified. Would you like to install it now?")) + "</p>",
+    [
+      { label: t("update.remindLater", "Remind Me Later") },
+      {
+        label: t("update.installNow", "Install Now"), primary: true,
+        onClick: () => attemptUpdateInstall()
+      }
+    ]
+  );
+}
+
+async function attemptUpdateInstall() {
+  if (state.update.popoverOpen) closeUpdatePopover();
+  // An active email backup must never be interrupted: verify with the
+  // backend that no synchronization is running before anything is closed.
+  let syncRunning = false;
+  try {
+    const s = await api().getSyncProgress();
+    syncRunning = !!(s && s.running);
+  } catch (e) {
+    syncRunning = false;
+  }
+  if (syncRunning) {
+    showUpdateSyncBlocked();
+    return;
+  }
+  runInstall();
+}
+
+function showUpdateSyncBlocked() {
+  showModal(
+    t("update.syncBlockedTitle", "Synchronization in progress"),
+    '<p style="margin:0">' + esc(t("update.syncBlockedBody",
+      "The update cannot be installed while an email synchronization is running, because MailDaan must close to apply it. Cancel the synchronization first, or install the update later.")) + "</p>",
+    [
+      { label: t("update.remindLater", "Remind Me Later"), primary: true },
+      {
+        label: t("update.cancelSyncAndInstall", "Cancel Sync & Install"), danger: true,
+        onClick: () => cancelSyncThenInstall()
+      }
+    ]
+  );
+}
+
+async function cancelSyncThenInstall() {
+  await api().cancelSync();
+  infoModal(t("update.syncBlockedTitle", "Synchronization in progress"),
+    t("update.cancellingSync",
+      "Cancelling the synchronization… The verified update will be installed as soon as it is safe."));
+  const deadline = Date.now() + 90000;
+  const settle = () => {
+    // The engine flags the run as finished slightly before its thread
+    // exits; give it a moment so the backend's install gate stays open.
+    hideModal();
+    runInstall();
+  };
+  const wait = async () => {
+    try {
+      const s = await api().getSyncProgress();
+      if (s && s.running && Date.now() < deadline) {
+        setTimeout(wait, 500);
+        return;
+      }
+    } catch (e) { /* fall through and try once */ }
+    if (Date.now() >= deadline) {
+      hideModal();
+      toast("<div>" + esc(t("update.cancelFailed",
+        "The synchronization is still running. The update stays ready — install it after the synchronization finishes.")) + "</div>", "error");
+      state.update.status = UPDATE.READY;
+      refreshUpdateChrome();
+      return;
+    }
+    setTimeout(settle, 700);
+  };
+  setTimeout(wait, 500);
+}
+
+async function runInstall() {
   if (state.update.popoverOpen) {
     const actions = $("updatePopover").querySelector(".upd-actions");
     if (actions) actions.innerHTML = '<span class="upd-spinner"></span><span>' +
       esc(t("update.installing", "Installing…")) + "</span>";
+    placeUpdatePopover();
   }
   let res = null;
   try {
@@ -1533,6 +1681,12 @@ async function updateInstall() {
   }
   // On success the application exits and the installer takes over.
   if (res && (res.error || res.error_key)) {
+    // The backend refuses to interrupt an active synchronization — never
+    // an automatic cancellation. Offer the same choice as before.
+    if (res.error_key === "update.syncRunning") {
+      showUpdateSyncBlocked();
+      return;
+    }
     state.update.status = UPDATE.ERROR;
     state.update.error = res.error_key
       ? t(res.error_key, res.error_key)
@@ -1887,11 +2041,18 @@ function bindOnce() {
   $("lockForm").addEventListener("submit", submitUnlock);
   $("lockExit").addEventListener("click", () => api().exitApp());
   // Close the update popover when clicking elsewhere or pressing Escape.
+  // The popover is anchored to the icon but is not a DOM child of the
+  // update button wrapper, so both containers count as "inside".
   document.addEventListener("click", (e) => {
-    if (state.update.popoverOpen && !e.target.closest(".update-wrap")) closeUpdatePopover();
+    if (state.update.popoverOpen && !e.target.closest(".update-wrap") &&
+        !e.target.closest("#updatePopover")) closeUpdatePopover();
   });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && state.update.popoverOpen) closeUpdatePopover();
+  });
+  // Keep the fixed popover inside the window when the window is resized.
+  window.addEventListener("resize", () => {
+    if (state.update.popoverOpen) placeUpdatePopover();
   });
   bindEyeToggles();
   bindAccountForm();

@@ -92,11 +92,19 @@
                     data-i18n-title="update.checkNow" title="Check for Updates"
                     aria-haspopup="dialog" aria-expanded="false"
                     aria-label="Updates">
-              <svg class="ic"><use href="#i-download"/></svg>
+              <span class="update-glyph">
+                <svg class="update-ring" viewBox="0 0 36 36" aria-hidden="true">
+                  <circle class="update-ring-track" cx="18" cy="18" r="15.5"/>
+                  <circle class="update-ring-fill" id="updateRingFill"
+                          cx="18" cy="18" r="15.5"
+                          pathLength="100" stroke-dasharray="100"
+                          stroke-dashoffset="100"/>
+                </svg>
+                <svg class="ic update-ic"><use href="#i-download" id="updateIcon"/></svg>
+                <span class="update-pct" id="updatePct" aria-hidden="true"></span>
+              </span>
               <span class="update-badge hidden" id="updateBadge" aria-hidden="true"></span>
             </button>
-            <div class="update-popover hidden" id="updatePopover" role="dialog"
-                 aria-label="Updates"></div>
           </div>
           <button class="sidebar-link danger" id="btnExit">
             <svg class="ic"><use href="#i-exit"/></svg>
@@ -409,6 +417,12 @@
     </div>
   </div>
 
+  <!-- The update popover lives outside the sidebar on purpose: the sidebar
+       is a scroll container, so an absolutely-positioned panel inside it
+       would be clipped. It is placed with position:fixed by app.js,
+       relative to the sidebar's update icon, and always inside the window. -->
+  <div class="update-popover hidden" id="updatePopover" role="dialog"
+       aria-label="Updates"></div>
   <div id="modalOverlay" class="modal-overlay hidden">
     <div class="modal-card" id="modalCard"></div>
   </div>
