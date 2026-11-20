@@ -104,13 +104,16 @@
 
 ## تصاویر
 
-این دو تصویر در جریان یک تست خودکار و کاملاً آفلاین در یک محیط ایزوله‌شدهٔ ویندوز
-(Windows Sandbox) و بدون هیچ حساب ایمیلی گرفته شده‌اند؛ بنابراین هیچ دادهٔ کاربری
-در آن‌ها وجود ندارد.
+این تصاویر در یک محیط واقعی ثبت شده‌اند؛ اطلاعات خصوصیِ موجود در آن‌ها تار شده
+است تا هیچ دادهٔ کاربری فاش نشود.
 
 <p float="right">
-  <img src="docs/screenshots/first-run-language.png" width="420" alt="اولین اجرای میل‌دان — انتخاب زبان" />
-  <img src="docs/screenshots/persian-interface.png" width="420" alt="رابط فارسی میل‌دان" />
+  <img src="docs/screenshots/persian-interface.jpg" width="420" alt="رابط فارسی میل‌دان" />
+  <img src="docs/screenshots/english-interface.jpg" width="420" alt="رابط انگلیسی میل‌دان" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/english-interface-02.jpg" width="940" alt="رابط انگلیسی میل‌دان — نمای دیگر" />
 </p>
 
 ## دانلود و نصب

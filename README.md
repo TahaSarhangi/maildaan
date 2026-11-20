@@ -88,12 +88,16 @@ Installing the application, and browsing or searching an existing archive, never
 
 ## Screenshots
 
-Both screens were captured during an automated offline acceptance test in a clean Windows
-Sandbox (no email account configured), so they contain no user data.
+These screens were captured in a live environment; any private information visible in them
+has been blurred so no user data is exposed.
 
 <p float="left">
-  <img src="docs/screenshots/first-run-language.png" width="420" alt="MailDaan first run — language selection" />
-  <img src="docs/screenshots/persian-interface.png" width="420" alt="MailDaan Persian interface" />
+  <img src="docs/screenshots/english-interface.jpg" width="420" alt="MailDaan English interface" />
+  <img src="docs/screenshots/persian-interface.jpg" width="420" alt="MailDaan Persian interface" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/english-interface-02.jpg" width="940" alt="MailDaan English interface — another view" />
 </p>
 
 ## Download and install
