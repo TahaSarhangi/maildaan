@@ -661,83 +661,182 @@ class ArchiveDB:
                 (utc_now_iso(), status, new_messages, deduped, errors, elapsed, log_id))
             self.conn.commit()
 
-    # ------------------------------------------------------------- export api
+    # ------------------------------------------------------------- report api
+    #
+    # Scope-driven reporting: every worksheet of a report is derived from
+    # exactly the same message set (same account, date range, folders,
+    # direction, drafts handling and keyword). Contact and domain statistics
+    # are computed from the filtered messages themselves and can therefore
+    # never be shown beside message counts from a wider scope.
 
-    def export_messages(self, filters: dict, sort: str = "newest", limit: int = 20000):
-        fragment = None
-        raw = filters.get("search") if isinstance(filters, dict) else None
+    def _report_where(self, scope: dict):
+        """WHERE clause selecting the messages of one report scope.
+
+        `folder_ids` (empty = every folder), `date_from`/`date_to` (epoch
+        seconds, inclusive) and `party`/`search` mirror the archive view so a
+        report always matches what the user searched for.
+        """
+        clauses, params = [], []
+        folder_ids = [int(f) for f in (scope.get("folder_ids") or []) if f]
+        if folder_ids:
+            marks = ",".join("?" * len(folder_ids))
+            clauses.append(
+                "m.id IN (SELECT message_id FROM message_folders "
+                f"WHERE folder_id IN ({marks}))")
+            params.extend(folder_ids)
+        if scope.get("date_from"):
+            clauses.append("m.date_ts >= ?")
+            params.append(int(scope["date_from"]))
+        if scope.get("date_to"):
+            clauses.append("m.date_ts <= ?")
+            params.append(int(scope["date_to"]))
+        if scope.get("party"):
+            clauses.append(
+                "(m.sender_email LIKE ? OR m.sender_name LIKE ? OR EXISTS("
+                "SELECT 1 FROM recipients r WHERE r.message_id=m.id AND "
+                "(r.email LIKE ? OR r.name LIKE ?)))")
+            like = f"%{str(scope['party']).replace('%', '\\%')}%"
+            params.extend([like, like, like, like])
+        raw = scope.get("search")
         if raw and str(raw).strip():
-            # Same direct search layers as the archive view so the exported
-            # scope matches what the user searched for (no fuzzy guessing).
             fragment, _ = self._search_fragment(str(raw), suggest=False)
-        where, params = self._build_where(filters, fragment)
-        sort_map = {"newest": "m.date_ts DESC", "oldest": "m.date_ts ASC",
-                    "sender": "m.sender_name ASC", "subject": "m.subject ASC"}
-        order = sort_map.get(sort, sort_map["newest"])
-        sql = f"""SELECT m.id, m.date_utc, m.sender_name, m.sender_email, m.subject,
-                         m.plain_body, m.eml_relpath, m.size,
-                         (SELECT GROUP_CONCAT(f.display_name, ' | ') FROM message_folders mf
-                          JOIN folders f ON f.id=mf.folder_id WHERE mf.message_id=m.id) AS folders
-                  FROM messages m {where} ORDER BY {order} LIMIT ?"""
-        with self._lock:
-            return [dict(r) for r in self.conn.execute(sql, params + [limit]).fetchall()]
+            if fragment:
+                clauses.append(fragment["sql"])
+                params.extend(fragment["params"])
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        return where, params
 
-    def export_recipients_for(self, message_ids):
+    def report_folders(self):
+        """Folders present in the archive, offered as report scope choices."""
+        with self._lock:
+            return [dict(r) for r in self.conn.execute(
+                "SELECT id, imap_name, display_name FROM folders "
+                "ORDER BY imap_name COLLATE NOCASE").fetchall()]
+
+    def report_message_count(self, scope: dict) -> int:
+        where, params = self._report_where(scope)
+        with self._lock:
+            row = self.conn.execute(
+                f"SELECT COUNT(*) FROM messages m {where}", params).fetchone()
+            return row[0] if row else 0
+
+    def report_messages(self, scope: dict, with_body: bool = False,
+                        limit: int = 100000):
+        """Messages of the scope with their folder membership.
+
+        Folder membership is needed to tell drafts from real correspondence
+        and to describe each message without exporting internal paths.
+        `with_body` defaults to False so a report without bodies never
+        transfers large text payloads at all.
+        """
+        where, params = self._report_where(scope)
+        body = ", m.plain_body" if with_body else ""
+        sql = f"""SELECT m.id, m.message_id, m.date_utc, m.date_ts, m.sender_name,
+                         m.sender_email, m.subject, m.size, m.eml_relpath{body},
+                         GROUP_CONCAT(DISTINCT f.imap_name) AS folder_imap,
+                         GROUP_CONCAT(DISTINCT f.display_name) AS folder_display
+                  FROM messages m
+                  LEFT JOIN message_folders mf ON mf.message_id = m.id
+                  LEFT JOIN folders f ON f.id = mf.folder_id
+                  {where}
+                  GROUP BY m.id
+                  ORDER BY m.date_ts DESC NULLS LAST, m.id DESC LIMIT ?"""
+        with self._lock:
+            return [dict(r) for r in
+                    self.conn.execute(sql, params + [limit]).fetchall()]
+
+    def _scope_participants_sql(self, message_ids):
+        """Union of the sender and recipient sides of the selected messages."""
+        ids = ",".join("?" * len(message_ids))
+        return f"""SELECT m.id AS mid, m.sender_email AS addr, m.sender_name AS nm,
+                          m.date_utc AS ts, 'out' AS dir
+                   FROM messages m WHERE m.id IN ({ids})
+                   UNION ALL
+                   SELECT r.message_id, r.email, r.name, m.date_utc, 'in'
+                   FROM recipients r
+                   JOIN messages m ON m.id = r.message_id
+                   WHERE r.message_id IN ({ids})"""
+
+    def report_contacts(self, message_ids):
+        """Correspondents derived only from the selected messages.
+
+        Every returned row has activity by construction; zero-activity rows
+        exist only in the explicitly requested complete directory
+        (report_contact_directory).
+        """
+        if not message_ids:
+            return []
+        sql = f"""SELECT lower(u.addr) AS email,
+                         GROUP_CONCAT(DISTINCT u.nm) AS names,
+                         substr(lower(u.addr), instr(lower(u.addr), '@') + 1) AS domain,
+                         COUNT(DISTINCT u.mid) AS messages,
+                         SUM(CASE WHEN u.dir='out' THEN 1 ELSE 0 END) AS outgoing,
+                         SUM(CASE WHEN u.dir='in' THEN 1 ELSE 0 END) AS incoming,
+                         MIN(u.ts) AS first_seen, MAX(u.ts) AS last_seen
+                  FROM ({self._scope_participants_sql(message_ids)}) AS u
+                  WHERE u.addr IS NOT NULL AND u.addr <> '' AND instr(u.addr, '@') > 0
+                  GROUP BY lower(u.addr)
+                  ORDER BY messages DESC, email ASC"""
+        # The participant union carries the message ids twice (sender side
+        # and recipient side), so the parameters must be supplied twice.
+        with self._lock:
+            return [dict(r) for r in
+                    self.conn.execute(sql, list(message_ids) * 2).fetchall()]
+
+    def report_domains(self, message_ids):
+        """Email domains derived only from the selected messages."""
+        if not message_ids:
+            return []
+        sql = f"""SELECT lower(substr(u.addr, instr(u.addr, '@') + 1)) AS domain,
+                         COUNT(DISTINCT lower(u.addr)) AS contacts,
+                         COUNT(DISTINCT u.mid) AS messages,
+                         MIN(u.ts) AS first_seen, MAX(u.ts) AS last_seen
+                  FROM ({self._scope_participants_sql(message_ids)}) AS u
+                  WHERE u.addr IS NOT NULL AND instr(u.addr, '@') > 0
+                  GROUP BY lower(substr(u.addr, instr(u.addr, '@') + 1))
+                  ORDER BY messages DESC, domain ASC"""
+        with self._lock:
+            return [dict(r) for r in
+                    self.conn.execute(sql, list(message_ids) * 2).fetchall()]
+
+    def report_attachments(self, message_ids):
+        """Attachment metadata of the selected messages with their context."""
+        if not message_ids:
+            return []
+        ids = ",".join("?" * len(message_ids))
+        sql = f"""SELECT a.message_id, a.filename, a.filename_safe, a.mime_type,
+                         a.size AS bytes, m.date_utc, m.subject, m.sender_email,
+                         m.sender_name
+                  FROM attachments a JOIN messages m ON m.id = a.message_id
+                  WHERE a.message_id IN ({ids})
+                  ORDER BY m.date_ts DESC NULLS LAST, a.id ASC"""
+        with self._lock:
+            return [dict(r) for r in
+                    self.conn.execute(sql, list(message_ids)).fetchall()]
+
+    def report_contact_directory(self):
+        """Complete contact directory of the account.
+
+        Includes contacts with no message inside the report scope; used only
+        when the user explicitly asks for the complete directory.
+        """
+        with self._lock:
+            return [dict(r) for r in self.conn.execute(
+                "SELECT email_norm, display_name, domain, first_seen, last_seen "
+                "FROM contacts ORDER BY email_norm").fetchall()]
+
+    # Recipient groups of the selected messages (to/cc/bcc columns).
+
+    def report_recipients_for(self, message_ids):
+        """to/cc/bcc rows of the selected messages, grouped by message."""
         if not message_ids:
             return []
         ids = ",".join("?" * len(message_ids))
         with self._lock:
             return [dict(r) for r in self.conn.execute(
                 f"SELECT message_id, rtype, name, email FROM recipients "
-                f"WHERE message_id IN ({ids})", message_ids).fetchall()]
-
-    def export_attachments_for(self, message_ids):
-        if not message_ids:
-            return []
-        ids = ",".join("?" * len(message_ids))
-        with self._lock:
-            return [dict(r) for r in self.conn.execute(
-                f"SELECT message_id, filename, size FROM attachments "
-                f"WHERE message_id IN ({ids})", message_ids).fetchall()]
-
-    def export_contacts(self, message_ids=None):
-        if message_ids is None:
-            with self._lock:
-                return [dict(r) for r in self.conn.execute(
-                    "SELECT email_norm, display_name, domain, first_seen, last_seen, "
-                    "sent_count, received_count FROM contacts ORDER BY email_norm").fetchall()]
-        # derive contacts only from the selected messages
-        ids = ",".join("?" * len(message_ids)) if message_ids else "NULL"
-        sql = f"""SELECT c.email_norm, c.display_name, c.domain, c.first_seen, c.last_seen,
-                         SUM(CASE WHEN m.id IS NOT NULL THEN 1 ELSE 0 END) AS msg_count,
-                         SUM(CASE WHEN m.sender_email = c.email_norm THEN 1 ELSE 0 END) AS received_count,
-                         SUM(CASE WHEN m.sender_email <> c.email_norm THEN 1 ELSE 0 END) AS sent_count
-                  FROM contacts c
-                  LEFT JOIN messages m ON m.id IN ({ids}) AND (
-                      m.sender_email = c.email_norm OR EXISTS (
-                          SELECT 1 FROM recipients r WHERE r.message_id=m.id AND r.email=c.email_norm))
-                  GROUP BY c.id ORDER BY c.email_norm"""
-        with self._lock:
-            return [dict(r) for r in self.conn.execute(sql, message_ids or []).fetchall()]
-
-    def export_organizations(self, message_ids=None):
-        if message_ids is None:
-            with self._lock:
-                return [dict(r) for r in self.conn.execute(
-                    "SELECT domain, contact_count, message_count, first_seen, last_seen "
-                    "FROM organizations ORDER BY domain").fetchall()]
-        ids = ",".join("?" * len(message_ids)) if message_ids else "NULL"
-        sql = f"""SELECT o.domain, o.contact_count,
-                         COUNT(DISTINCT m.id) AS message_count, MIN(m.date_utc) AS first_seen,
-                         MAX(m.date_utc) AS last_seen
-                  FROM organizations o
-                  LEFT JOIN messages m ON m.id IN ({ids}) AND (
-                      substr(m.sender_email, instr(m.sender_email,'@')+1) = o.domain OR EXISTS (
-                          SELECT 1 FROM recipients r JOIN messages rm ON rm.id=r.message_id
-                          WHERE rm.id=m.id AND substr(r.email, instr(r.email,'@')+1)=o.domain))
-                  GROUP BY o.id ORDER BY o.domain"""
-        with self._lock:
-            return [dict(r) for r in self.conn.execute(sql, message_ids or []).fetchall()]
+                f"WHERE message_id IN ({ids}) "
+                f"ORDER BY message_id, rtype, email", list(message_ids)).fetchall()]
 
 
 def content_hash_of(raw: bytes) -> str:

@@ -123,7 +123,7 @@
             </div>
             <button class="btn btn-accent hidden" id="btnExport">
               <svg class="ic"><use href="#i-sheet"/></svg>
-              <span data-i18n="nav.exportExcel">Export to Excel</span>
+              <span data-i18n="nav.createReport">Create Report</span>
             </button>
           </div>
         </header>
@@ -182,17 +182,21 @@
               <form id="accountForm" autocomplete="off" novalidate>
                 <div class="form-grid">
                   <label class="field"><span data-i18n="accounts.display">Display name (optional)</span>
-                    <input type="text" id="accDisplayName" placeholder="Work, Personal…"></label>
+                    <input type="text" id="accDisplayName"
+                           data-i18n-ph="accounts.displayPlaceholder" placeholder="Personal, Work"></label>
                   <label class="field"><span data-i18n="config.username">Email Address / Username</span>
-                    <input type="text" id="accEmail" placeholder="you@example.com" required></label>
+                    <input type="text" id="accEmail" dir="ltr"
+                           data-i18n-ph="config.emailPlaceholder" placeholder="name@example.com" required></label>
                   <label class="field"><span data-i18n="config.imapServer">IMAP Server</span>
-                    <input type="text" id="accHost" placeholder="imap.example.com" required></label>
+                    <input type="text" id="accHost" dir="ltr"
+                           data-i18n-ph="config.hostPlaceholder" placeholder="imap.example.com" required></label>
                   <label class="field field-port"><span data-i18n="config.imapPort">IMAP Port</span>
                     <input type="number" id="accPort" min="1" max="65535" value="993" required></label>
                 </div>
                 <label class="field field-half" id="accPasswordField">
                   <span data-i18n="config.password">Password</span>
-                  <input type="password" id="accPassword">
+                  <input type="password" id="accPassword" autocomplete="off"
+                         data-i18n-ph="config.password" placeholder="Password">
                 </label>
                 <div id="accError" class="form-error hidden"></div>
                 <div class="form-actions">
@@ -235,7 +239,8 @@
                 <label class="filter-field"><span data-i18n="filters.dateTo">Date to</span>
                   <input type="date" id="filterTo" class="select"></label>
                 <label class="filter-field"><span data-i18n="filters.party">Sender or recipient</span>
-                  <input type="text" id="filterParty" class="select"></label>
+                  <input type="text" id="filterParty" class="select"
+                         data-i18n-ph="filters.partyPlaceholder" placeholder="Name or email address…"></label>
                 <div class="filter-actions">
                   <button class="btn btn-primary small" id="btnApplyFilters" data-i18n="filters.apply">Apply</button>
                   <button class="btn small" id="btnResetFilters" data-i18n="filters.reset">Reset</button>
@@ -380,12 +385,15 @@
                 <select id="settingsAccount" class="select"></select></label>
               <form id="accountSettingsForm" autocomplete="off" novalidate>
                 <label class="field"><span data-i18n="accounts.display">Display name (optional)</span>
-                  <input type="text" id="setDisplayName"></label>
+                  <input type="text" id="setDisplayName"
+                         data-i18n-ph="accounts.displayPlaceholder" placeholder="Personal, Work"></label>
                 <label class="field"><span data-i18n="config.username">Email Address / Username</span>
-                  <input type="text" id="setUser" required></label>
+                  <input type="text" id="setUser" dir="ltr"
+                         data-i18n-ph="config.emailPlaceholder" placeholder="name@example.com" required></label>
                 <div class="form-grid two">
                   <label class="field"><span data-i18n="config.imapServer">IMAP Server</span>
-                    <input type="text" id="setHost" required></label>
+                    <input type="text" id="setHost" dir="ltr"
+                           data-i18n-ph="config.hostPlaceholder" placeholder="imap.example.com" required></label>
                   <label class="field field-port"><span data-i18n="config.imapPort">IMAP Port</span>
                     <input type="number" id="setPort" min="1" max="65535" required></label>
                 </div>

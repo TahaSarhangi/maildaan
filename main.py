@@ -671,20 +671,56 @@ class AppApi:
                 pass
         return {"ok": True, "completed": completed}
 
-    # --------------------------------------------------------------- export
+    # --------------------------------------------------------------- reporting
+
+    @staticmethod
+    def _parse_options(options_json):
+        try:
+            options = json.loads(options_json) if options_json else {}
+        except ValueError:
+            options = {}
+        return options if isinstance(options, dict) else {}
 
     @requires_unlock
     @user_facing
-    def exportExcel(self, filters_json, sort="newest"):
+    def reportFolders(self):
+        """Folders of the active account, offered as report scope choices."""
+        account, paths = self._active_paths()
+        if account is None:
+            return []
+        with storage.ArchiveDB(paths["db"]) as db:
+            return db.report_folders()
+
+    @requires_unlock
+    @user_facing
+    def previewReportCount(self, options_json):
+        """Approximate number of messages matching the configured scope.
+
+        Shown in the report dialog before anything is generated, so the user
+        can judge the scope without producing a file.
+        """
+        account, paths = self._active_paths()
+        if account is None:
+            return {"count": 0}
+        options = self._parse_options(options_json)
+        scope = export.resolve_scope(options.get("scope") or {})
+        try:
+            with storage.ArchiveDB(paths["db"]) as db:
+                return {"count": db.report_message_count(scope)}
+        except Exception:
+            logger.error("report preview failed\n%s", traceback.format_exc())
+            return {"count": 0, "error_key": "export.failed"}
+
+    @requires_unlock
+    @user_facing
+    def createReport(self, options_json):
+        """Generate the configured Excel report (native Save As dialog)."""
         account, paths = self._active_paths()
         if account is None:
             return {"error_key": "export.failed"}
-        filters = {}
-        try:
-            if filters_json:
-                filters = json.loads(filters_json)
-        except ValueError:
-            filters = {}
+        options = self._parse_options(options_json)
+        self.settings = config.load_settings()
+        lang = (options.get("lang") or self.settings.get("language") or "en")
         stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
         default = f"maildaan-report-{stamp}.xlsx"
         target = dialogs.save_dialog("MailDaan", default, extension="xlsx")
@@ -692,11 +728,9 @@ class AppApi:
             return None
         try:
             with storage.ArchiveDB(paths["db"]) as db:
-                summary = export.generate_workbook(db, filters, sort,
-                                                    self.settings.get("language") or "en",
-                                                    target)
+                summary = export.build_report(db, options, lang, account, target)
         except Exception as exc:
-            logger.error("excel export failed\n%s", traceback.format_exc())
+            logger.error("report generation failed\n%s", traceback.format_exc())
             return {"error_key": "export.failed",
                     "error_detail": str(exc)}
         return summary

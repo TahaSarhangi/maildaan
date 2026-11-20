@@ -110,11 +110,20 @@ function formatDate(value) {
   }
 }
 
+/* Centralized locale-aware duration rendering. Durations are always shown
+   as MM:SS (HH:MM:SS once an hour has elapsed); Latin or Persian digits
+   follow the active interface language. The numeric value is never altered
+   — this is display formatting only. */
 function formatDuration(seconds) {
-  seconds = Math.round(seconds || 0);
-  if (seconds < 60) return toDigits(seconds) + " " + t("common.seconds", "s");
-  const m = Math.floor(seconds / 60), s = seconds % 60;
-  return toDigits(m) + ":" + String(s).padStart(2, "0");
+  seconds = Math.max(0, Math.round(seconds || 0));
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  const pad = (n) => String(n).padStart(2, "0");
+  const text = h > 0
+    ? pad(h) + ":" + pad(m) + ":" + pad(s)
+    : pad(m) + ":" + pad(s);
+  return toDigits(text);
 }
 
 function api() {
@@ -225,6 +234,7 @@ async function applyLanguage(lang) {
   }
   if (state.view === "sync") renderSyncScreen();
   if (state.view === "settings") loadSettingsForms();
+  if (reportState && reportState.open) renderReportDialog();
   if (state.update.popoverOpen) renderUpdatePopover();
   updateTopbar();
 }
@@ -1203,26 +1213,412 @@ function restartSyncAfterTrust(accountId) {
 
 /* ------------------------------------------------------------------- export */
 
-async function onExportExcel() {
+/* ------------------------------------------------------ report builder */
+
+/* The Excel report is only produced through this configuration dialog:
+   purpose, scope and output content are chosen before any file is
+   generated. Nothing here touches the archive — a report is read-only. */
+const REPORT_DRAFT = {
+  purpose: "comprehensive",
+  range: "all",
+  dateFrom: "",
+  dateTo: "",
+  allFolders: true,
+  folderIds: [],
+  direction: "both",
+  includeDrafts: false,
+  keyword: "",
+  content: {
+    summary: true, messages: true, contacts: true, domains: true,
+    attachments: false, body: false, emlPath: false, allContacts: false,
+    charts: true,
+  },
+  columns: {
+    date: true, direction: true, senderName: true, senderEmail: true,
+    recipients: true, cc: false, bcc: false, subject: true, folders: true,
+    size: true, attachments: true,
+  },
+};
+
+/* Recommended output content per report purpose. The user can still change
+   every checkbox afterwards. Full bodies stay off in every preset. */
+const REPORT_PRESETS = {
+  comprehensive: { summary: true, messages: false, contacts: true,
+                   domains: true, attachments: false },
+  activity: { summary: true, messages: true, contacts: false,
+              domains: false, attachments: false },
+  contacts: { summary: true, messages: false, contacts: true,
+              domains: false, attachments: false },
+  domains: { summary: true, messages: false, contacts: false,
+             domains: true, attachments: false },
+  messages: { summary: false, messages: true, contacts: false,
+              domains: false, attachments: true },
+};
+
+let reportState = null;
+let reportCountTimer = null;
+let reportCountSeq = 0;
+
+function rdKey(key, fallback) { return t("reportDialog." + key, fallback); }
+
+function reportOptions() {
+  const d = REPORT_DRAFT;
+  return {
+    purpose: d.purpose,
+    lang: state.lang,
+    scope: {
+      range: d.range,
+      date_from: d.dateFrom,
+      date_to: d.dateTo,
+      folder_ids: d.allFolders ? [] : d.folderIds.slice(),
+      direction: d.direction,
+      include_drafts: d.includeDrafts,
+      keyword: d.keyword,
+    },
+    content: Object.assign({}, d.content),
+    columns: Object.assign({}, d.columns),
+  };
+}
+
+function reportSummaryText() {
+  const d = REPORT_DRAFT;
+  const account = activeAccount();
+  const ranges = { all: rdKey("rangeAll", "All time"),
+                   "30d": rdKey("range30", "Last 30 days"),
+                   year: rdKey("rangeYear", "Last year"),
+                   custom: rdKey("rangeCustom", "Custom dates") };
+  const dirs = { both: rdKey("dirBoth", "Incoming and outgoing"),
+                 incoming: rdKey("dirIncoming", "Incoming only"),
+                 outgoing: rdKey("dirOutgoing", "Outgoing only") };
+  const parts = [];
+  if (account) parts.push(account.display_name || account.email);
+  parts.push(ranges[d.range] || ranges.all);
+  if (d.range === "custom")
+    parts.push((d.dateFrom || "…") + " → " + (d.dateTo || "…"));
+  parts.push((d.allFolders || !d.folderIds.length)
+    ? rdKey("allFolders", "All folders")
+    : toDigits(d.folderIds.length) + " " + rdKey("folders", "Mail folders"));
+  parts.push(dirs[d.direction] || dirs.both);
+  parts.push(rdKey(d.includeDrafts ? "draftsIncluded" : "draftsExcluded", "Drafts"));
+  if (d.keyword.trim())
+    parts.push(rdKey("keyword", "Keyword") + ": " + d.keyword.trim());
+  return parts.join(" • ");
+}
+
+function renderReportDialog() {
+  const d = REPORT_DRAFT;
+  const purposes = [
+    ["comprehensive", rdKey("purposeComprehensive", "Comprehensive / Management Report"),
+     rdKey("purposeComprehensiveDesc", "")],
+    ["activity", rdKey("purposeActivity", "Correspondence Activity"),
+     rdKey("purposeActivityDesc", "")],
+    ["contacts", rdKey("purposeContacts", "Contacts Analysis"),
+     rdKey("purposeContactsDesc", "")],
+    ["domains", rdKey("purposeDomains", "Email Domain Analysis"),
+     rdKey("purposeDomainsDesc", "")],
+    ["messages", rdKey("purposeMessages", "Detailed Message Export"),
+     rdKey("purposeMessagesDesc", "")],
+  ];
+  const purposeRow = (value, label, desc) =>
+    '<label class="rd-opt' + (d.purpose === value ? " selected" : "") + '">' +
+      '<input type="radio" name="rdPurpose" value="' + value + '"' +
+      (d.purpose === value ? " checked" : "") + ">" +
+      '<span class="rd-opt-text"><span class="rd-opt-label">' + esc(label) + "</span>" +
+      (desc ? '<span class="rd-opt-desc">' + esc(desc) + "</span>" : "") +
+      "</span></label>";
+  const ranges = [["all", rdKey("rangeAll", "All time")],
+                  ["30d", rdKey("range30", "Last 30 days")],
+                  ["year", rdKey("rangeYear", "Last year")],
+                  ["custom", rdKey("rangeCustom", "Custom dates")]];
+  const dirs = [["both", rdKey("dirBoth", "Incoming and outgoing")],
+                ["incoming", rdKey("dirIncoming", "Incoming only")],
+                ["outgoing", rdKey("dirOutgoing", "Outgoing only")]];
+  const sel = (id, options, current) =>
+    '<select id="' + id + '" class="select">' +
+      options.map((o) => '<option value="' + o[0] + '"' +
+        (o[0] === current ? " selected" : "") + ">" + esc(o[1]) + "</option>").join("") +
+    "</select>";
+  const folderList = reportState.folders.map((f) => {
+    const name = state.folderDisplay[f.display_name] || f.display_name || f.imap_name;
+    const on = d.folderIds.indexOf(f.id) >= 0;
+    return '<label class="rd-check"><input type="checkbox" class="rdFolder" value="' +
+      f.id + '"' + (on ? " checked" : "") + ">" + esc(name) + "</label>";
+  }).join("");
+  const c = d.content;
+  const contentCheck = (key, label, hint) =>
+    '<label class="rd-check' + (c[key] ? " on" : "") + '">' +
+      '<input type="checkbox" class="rdContent" data-key="' + key + '"' +
+      (c[key] ? " checked" : "") + "><span>" + esc(label) +
+      (hint ? '<span class="rd-hint">' + esc(hint) + "</span>" : "") +
+      "</span></label>";
+  const colCheck = (key, label) =>
+    '<label class="rd-check' + (d.columns[key] ? " on" : "") + '">' +
+      '<input type="checkbox" class="rdColumn" data-key="' + key + '"' +
+      (d.columns[key] ? " checked" : "") + ">" + esc(label) + "</label>";
+  const body =
+    '<div class="rd-section"><div class="rd-label">' +
+      esc(rdKey("purposeTitle", "Report purpose")) + "</div>" +
+      '<div class="rd-opts">' + purposes.map((p) => purposeRow(p[0], p[1], p[2])).join("") +
+      "</div></div>" +
+    '<div class="rd-section"><div class="rd-label">' +
+      esc(rdKey("scopeTitle", "Reporting scope")) + "</div>" +
+      '<div class="rd-row">' +
+        '<label class="rd-field"><span>' + esc(rdKey("account", "Account")) + "</span>" +
+          '<input type="text" class="select" dir="ltr" value="' +
+          esc((activeAccount() || {}).email || "") + '" disabled></label>' +
+        '<label class="rd-field"><span>' + esc(rdKey("dateRange", "Date range")) + "</span>" +
+          sel("rdRange", ranges, d.range) + "</label>" +
+        '<label class="rd-field rd-date' + (d.range === "custom" ? "" : " hidden") +
+          '"><span>' + esc(rdKey("dateFrom", "From")) + "</span>" +
+          '<input type="date" id="rdFrom" class="select" value="' + esc(d.dateFrom) + '"></label>' +
+        '<label class="rd-field rd-date' + (d.range === "custom" ? "" : " hidden") +
+          '"><span>' + esc(rdKey("dateTo", "To")) + "</span>" +
+          '<input type="date" id="rdTo" class="select" value="' + esc(d.dateTo) + '"></label>' +
+      "</div>" +
+      '<div class="rd-row">' +
+        '<div class="rd-field rd-folders"><span>' + esc(rdKey("folders", "Mail folders")) + "</span>" +
+          '<label class="rd-check"><input type="checkbox" id="rdAllFolders"' +
+            (d.allFolders ? " checked" : "") + ">" +
+            esc(rdKey("allFolders", "All folders")) + "</label>" +
+          '<div class="rd-folder-list' + (d.allFolders ? " hidden" : "") + '" id="rdFolderList">' +
+            (folderList || '<div class="rd-hint">' + esc(rdKey("noFolders", "")) + "</div>") +
+          "</div>" +
+        "</div>" +
+        '<label class="rd-field"><span>' + esc(rdKey("direction", "Direction")) + "</span>" +
+          sel("rdDirection", dirs, d.direction) + "</label>" +
+        '<div class="rd-field"><span>&nbsp;</span>' +
+          '<label class="rd-check"><input type="checkbox" id="rdDrafts"' +
+            (d.includeDrafts ? " checked" : "") + ">" +
+            esc(rdKey("includeDrafts", "Include drafts")) + "</label>" +
+          '<div class="rd-hint">' + esc(rdKey("draftsHint", "")) + "</div>" +
+        "</div>" +
+        '<label class="rd-field rd-keyword"><span>' + esc(rdKey("keyword", "Keyword (optional)")) + "</span>" +
+          '<input type="text" id="rdKeyword" class="select" value="' + esc(d.keyword) +
+          '" data-i18n-ph="reportDialog.keywordPlaceholder" placeholder="' +
+          esc(rdKey("keywordPlaceholder", "")) + '"></label>' +
+      "</div>" +
+    "</div>" +
+    '<div class="rd-section"><div class="rd-label">' +
+      esc(rdKey("contentTitle", "Output content")) + "</div>" +
+      '<div class="rd-checks">' +
+        contentCheck("summary", rdKey("contentSummary", "Executive summary and charts"), "") +
+        contentCheck("messages", rdKey("contentMessages", "Message details"), "") +
+        contentCheck("contacts", rdKey("contentContacts", "Contacts"), "") +
+        contentCheck("domains", rdKey("contentDomains", "Email domains"), "") +
+        contentCheck("attachments", rdKey("contentAttachments", "Attachment metadata"), "") +
+        contentCheck("body", rdKey("contentBody", "Include full message bodies"),
+                     rdKey("contentBodyHint", "")) +
+        contentCheck("allContacts", rdKey("contentAllContacts", "Complete directory"), "") +
+        contentCheck("emlPath", rdKey("contentEmlPath", "Include original EML paths"), "") +
+      "</div>" +
+      '<div class="rd-columns' + (c.messages ? "" : " hidden") + '">' +
+        '<div class="rd-label">' + esc(rdKey("contentColumns", "Message columns")) + "</div>" +
+        '<div class="rd-checks">' +
+          colCheck("date", rdKey("colDate", "Date")) +
+          colCheck("direction", rdKey("colDirection", "Direction")) +
+          colCheck("senderName", rdKey("colSenderName", "Sender name")) +
+          colCheck("senderEmail", rdKey("colSenderEmail", "Sender email")) +
+          colCheck("recipients", rdKey("colRecipients", "Recipients")) +
+          colCheck("cc", rdKey("colCc", "CC")) +
+          colCheck("bcc", rdKey("colBcc", "BCC")) +
+          colCheck("subject", rdKey("colSubject", "Subject")) +
+          colCheck("folders", rdKey("colFolders", "Folders")) +
+          colCheck("size", rdKey("colSize", "Size")) +
+          colCheck("attachments", rdKey("colAttachments", "Attachments")) +
+        "</div>" +
+      "</div>" +
+    "</div>" +
+    '<div class="rd-section"><div class="rd-label">' +
+      esc(rdKey("summaryTitle", "Summary")) + "</div>" +
+      '<div class="rd-summary" id="rdSummary"></div>' +
+      '<div class="rd-count" id="rdCount"></div>' +
+    "</div>";
+  showModal(rdKey("title", "Create Report"), body, [
+    { label: rdKey("cancel", "Cancel"),
+      onClick: () => { closeReportDialog(); } },
+    { label: rdKey("generate", "Create Report"), primary: true, keepOpen: true,
+      onClick: onGenerateReport },
+  ]);
+  $("modalCard").classList.add("report-card");
+  updateReportSummary();
+  bindReportDialog();
+}
+
+function updateReportSummary() {
+  const summary = $("rdSummary");
+  if (!summary) return;
+  const content = REPORT_DRAFT.content;
+  const chosen = [];
+  if (content.summary) chosen.push(rdKey("contentSummary", "Summary"));
+  if (content.messages) chosen.push(rdKey("contentMessages", "Messages"));
+  if (content.contacts) chosen.push(rdKey("contentContacts", "Contacts"));
+  if (content.domains) chosen.push(rdKey("contentDomains", "Domains"));
+  if (content.attachments) chosen.push(rdKey("contentAttachments", "Attachments"));
+  summary.innerHTML = esc(reportSummaryText()) +
+    '<div class="rd-output">' + esc(chosen.join(" • ")) + "</div>";
+}
+
+function refreshReportCount() {
+  if (!reportState || !reportState.open) return;
+  if (reportCountTimer) clearTimeout(reportCountTimer);
+  reportCountTimer = setTimeout(async () => {
+    const seq = ++reportCountSeq;
+    const box = $("rdCount");
+    if (box) box.innerHTML = '<span class="rd-spinner"></span>' +
+      esc(rdKey("matchingCounting", "Counting…"));
+    const res = await api().previewReportCount(JSON.stringify(reportOptions()));
+    if (seq !== reportCountSeq || !reportState || !reportState.open) return;
+    if (!box) return;
+    if (res && res.error_key) { box.textContent = ""; return; }
+    const n = res ? res.count : 0;
+    box.innerHTML = "<b>" + toDigits(n) + "</b> " +
+      esc(rdKey("matching", "Matching messages")) +
+      (n === 0 ? '<div class="rd-warn">' + esc(rdKey("matchingNone", "")) + "</div>" : "");
+  }, 350);
+}
+
+function bindReportDialog() {
+  const card = $("modalCard");
+  card.querySelectorAll('input[name="rdPurpose"]').forEach((el) => {
+    el.addEventListener("change", () => {
+      REPORT_DRAFT.purpose = el.value;
+      const preset = REPORT_PRESETS[el.value] || {};
+      Object.keys(preset).forEach((k) => { REPORT_DRAFT.content[k] = preset[k]; });
+      renderReportDialog();
+      refreshReportCount();
+    });
+  });
+  const range = $("rdRange");
+  if (range) range.addEventListener("change", () => {
+    REPORT_DRAFT.range = range.value;
+    card.querySelectorAll(".rd-date").forEach((el) =>
+      el.classList.toggle("hidden", range.value !== "custom"));
+    refreshReportCount();
+  });
+  ["rdFrom", "rdTo"].forEach((id) => {
+    const el = $(id);
+    if (el) el.addEventListener("change", () => {
+      REPORT_DRAFT[id === "rdFrom" ? "dateFrom" : "dateTo"] = el.value;
+      refreshReportCount();
+    });
+  });
+  const all = $("rdAllFolders");
+  if (all) all.addEventListener("change", () => {
+    REPORT_DRAFT.allFolders = all.checked;
+    REPORT_DRAFT.folderIds = [];
+    const list = $("rdFolderList");
+    if (list) {
+      list.classList.toggle("hidden", all.checked);
+      list.querySelectorAll(".rdFolder").forEach((b) => { b.checked = false; });
+    }
+    refreshReportCount();
+  });
+  card.querySelectorAll(".rdFolder").forEach((box) => {
+    box.addEventListener("change", () => {
+      const id = Number(box.value);
+      const ids = REPORT_DRAFT.folderIds;
+      if (box.checked && ids.indexOf(id) < 0) ids.push(id);
+      if (!box.checked) REPORT_DRAFT.folderIds = ids.filter((x) => x !== id);
+      REPORT_DRAFT.allFolders = REPORT_DRAFT.folderIds.length === 0;
+      if (all) all.checked = REPORT_DRAFT.allFolders;
+      const list = $("rdFolderList");
+      if (list) list.classList.toggle("hidden", REPORT_DRAFT.allFolders);
+      refreshReportCount();
+    });
+  });
+  const direction = $("rdDirection");
+  if (direction) direction.addEventListener("change", () => {
+    REPORT_DRAFT.direction = direction.value;
+    refreshReportCount();
+  });
+  const drafts = $("rdDrafts");
+  if (drafts) drafts.addEventListener("change", () => {
+    REPORT_DRAFT.includeDrafts = drafts.checked;
+    refreshReportCount();
+  });
+  const keyword = $("rdKeyword");
+  if (keyword) keyword.addEventListener("input", () => {
+    REPORT_DRAFT.keyword = keyword.value;
+    refreshReportCount();
+  });
+  card.querySelectorAll(".rdContent").forEach((box) => {
+    box.addEventListener("change", () => {
+      REPORT_DRAFT.content[box.getAttribute("data-key")] = box.checked;
+      const label = box.closest(".rd-check");
+      if (label) label.classList.toggle("on", box.checked);
+      const columns = card.querySelector(".rd-columns");
+      if (columns) columns.classList.toggle("hidden", !REPORT_DRAFT.content.messages);
+      updateReportSummary();
+    });
+  });
+  card.querySelectorAll(".rdColumn").forEach((box) => {
+    box.addEventListener("change", () => {
+      REPORT_DRAFT.columns[box.getAttribute("data-key")] = box.checked;
+      const label = box.closest(".rd-check");
+      if (label) label.classList.toggle("on", box.checked);
+    });
+  });
+}
+
+function openReportDialog() {
   if (state.busy) return;
   const account = activeAccount();
   if (!account) { errorModal({ error_key: "accounts.none" }); return; }
   state.busy = true;
-  const btn = $("btnExport");
-  btn.disabled = true;
-  try {
-    const filters = state.view === "archive" ? currentFilters() : {};
-    const res = await api().exportExcel(JSON.stringify(filters), state.sort);
-    if (!res) return;                       // save dialog cancelled
-    if (res.error_key || res.error) { reportError(res); return; }
-    toast(esc(t("export.done", "Excel report created.")) + "<br>" +
-      toDigits(res.messages) + " " + esc(t("export.messages", "messages")) + " • " +
-      toDigits(res.contacts) + " " + esc(t("export.contacts", "contacts")) + " • " +
-      toDigits(res.organizations) + " " + esc(t("export.organizations", "organizations")) +
-      "<br>" + esc(res.path), "success");
-  } finally {
-    btn.disabled = false;
+  api().reportFolders().then((folders) => {
     state.busy = false;
+    reportState = {
+      open: true,
+      folders: Array.isArray(folders) && !folders.error_key ? folders : [],
+    };
+    renderReportDialog();
+    refreshReportCount();
+  });
+}
+
+// Closing the report dialog also drops the wider card layout so later
+// modals keep their normal width.
+function resetReportState() {
+  reportState = { open: false, folders: [] };
+  const card = $("modalCard");
+  if (card) card.classList.remove("report-card");
+}
+
+function closeReportDialog() {
+  resetReportState();
+  hideModal();
+}
+
+async function onGenerateReport() {
+  const content = REPORT_DRAFT.content;
+  if (!(content.summary || content.messages || content.contacts ||
+        content.domains || content.attachments)) {
+    toast("<div>" + esc(rdKey("selectContent", "Select at least one output.")) + "</div>",
+      "error");
+    return;
+  }
+  if (REPORT_DRAFT.range === "custom" && !(REPORT_DRAFT.dateFrom && REPORT_DRAFT.dateTo)) {
+    toast("<div>" + esc(rdKey("customRangeNeeded", "")) + "</div>", "error");
+    return;
+  }
+  const card = $("modalCard");
+  const buttons = card ? card.querySelectorAll(".modal-actions button") : [];
+  buttons.forEach((b) => { b.disabled = true; });
+  const last = buttons[buttons.length - 1];
+  if (last) last.textContent = rdKey("generating", "Generating…");
+  try {
+    const res = await api().createReport(JSON.stringify(reportOptions()));
+    if (!res) { closeReportDialog(); return; }
+    if (res.error_key || res.error) {
+      resetReportState();
+      reportError(res);
+      return;
+    }
+    closeReportDialog();
+    toast(esc(t("export.created", "Report created.")) + "<br>" + esc(res.path), "success");
+  } finally {
+    buttons.forEach((b) => { b.disabled = false; });
+    if (last) last.textContent = rdKey("generate", "Create Report");
   }
 }
 
@@ -2027,7 +2423,7 @@ function bindOnce() {
   $("navArchive").addEventListener("click", goArchive);
   $("navSync").addEventListener("click", () => { show("sync"); renderSyncScreen(); });
   $("navSettings").addEventListener("click", () => { show("settings"); loadSettingsForms(); });
-  $("btnExport").addEventListener("click", onExportExcel);
+  $("btnExport").addEventListener("click", openReportDialog);
   $("btnTheme").addEventListener("click", toggleTheme);
   $("btnLang").addEventListener("click", toggleLanguage);
   $("btnUpdate").addEventListener("click", (e) => { e.stopPropagation(); toggleUpdatePopover(); });
