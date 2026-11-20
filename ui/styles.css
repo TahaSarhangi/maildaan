@@ -462,29 +462,6 @@ mark { background: var(--primary-soft); color: var(--primary);
 .sync-error { background: var(--danger-soft); border: 1px solid var(--danger); color: var(--danger);
   border-radius: var(--radius); padding: 8px 12px; font-size: 12px; margin-bottom: 12px; overflow-wrap: anywhere; }
 
-/* Segmented button group */
-.seg-group { display: flex; gap: 4px; background: var(--surface-2); border-radius: var(--radius); padding: 4px; }
-.seg-btn { flex: 1; padding: 8px 14px; border: none; background: transparent; color: var(--muted);
-  border-radius: calc(var(--radius) - 2px); font-size: 12.5px; font-weight: 600; cursor: pointer;
-  transition: background .15s, color .15s; white-space: nowrap; }
-.seg-btn:hover { color: var(--text); }
-.seg-btn.active { background: var(--surface); color: var(--primary); box-shadow: 0 1px 3px rgba(0,0,0,.1); }
-
-/* Update status */
-.update-status { margin-top: 12px; }
-.update-uptodate { padding: 12px; background: var(--success-soft); border: 1px solid var(--success); border-radius: var(--radius); color: var(--success); font-size: 13px; }
-.update-available { border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 16px; background: var(--surface); }
-.update-available h4 { margin: 0 0 8px; color: var(--primary); }
-.update-available p { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
-.update-version { margin-bottom: 10px; font-size: 13.5px; }
-.update-notes { font-size: 12px; color: var(--muted); margin-bottom: 16px; padding: 10px; background: var(--surface-2); border-radius: var(--radius); max-height: 120px; overflow: auto; }
-.update-actions { display: flex; gap: 10px; justify-content: flex-end; }
-.update-downloading { padding: 16px; }
-.update-downloading p { margin: 0 0 12px; color: var(--text); font-size: 13px; }
-.update-ready { padding: 16px; background: var(--success-soft); border: 1px solid var(--success); border-radius: var(--radius); }
-.update-ready p { margin: 0 0 16px; color: var(--success); }
-.update-error { padding: 12px; background: var(--danger-soft); border: 1px solid var(--danger); border-radius: var(--radius); color: var(--danger); font-size: 13px; }
-
 .report-list { margin: 10px 0 16px; }
 .report-row { display: flex; justify-content: space-between; padding: 7px 2px;
   border-bottom: 1px dashed var(--border); font-size: 13px; }
@@ -539,6 +516,109 @@ mark { background: var(--primary-soft); color: var(--primary);
   overflow-wrap: anywhere; word-break: break-all; }
 .cert-hint { font-size: 12px; color: var(--muted); margin: 12px 0 0; }
 
+/* ------------------------------------------------- sidebar update control */
+.update-wrap { position: relative; display: flex; }
+.update-link {
+  width: 36px; min-height: 32px; padding: 0; justify-content: center;
+  position: relative; color: var(--muted);
+}
+.update-link:hover { color: var(--primary); }
+.update-link .ic { width: 17px; height: 17px; }
+.update-badge {
+  position: absolute; top: 3px; inset-inline-end: 3px;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 1.5px var(--surface);
+}
+.update-badge.ready { background: var(--success); }
+
+/* Compact contextual update popover (ChatGPT-style). Anchored above the
+   sidebar's bottom section; inset-inline-start keeps it inside the sidebar
+   edge in both LTR and RTL layouts. */
+.update-popover {
+  position: absolute; bottom: calc(100% + 8px); inset-inline-start: 0;
+  width: 300px; z-index: 45;
+  background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .28);
+  padding: 14px 16px;
+}
+.upd-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.upd-title { font-size: 13px; font-weight: 700; color: var(--text); }
+.upd-body { font-size: 12.5px; color: var(--muted); line-height: 1.6; overflow-wrap: anywhere; }
+.upd-message { display: flex; align-items: flex-start; gap: 8px; }
+.upd-message .ic { width: 15px; height: 15px; flex: 0 0 auto; margin-top: 2px; }
+.upd-ok { color: var(--success); font-weight: 600; }
+.upd-version { font-weight: 700; color: var(--primary); margin: 0 0 4px; unicode-bidi: plaintext; }
+.upd-notes {
+  margin-top: 8px; padding: 8px 10px;
+  background: var(--surface-2); border-radius: var(--radius);
+  font-size: 11.5px; color: var(--muted);
+  max-height: 96px; overflow: auto; overflow-wrap: anywhere; white-space: pre-line;
+}
+.upd-error {
+  background: var(--danger-soft); border: 1px solid var(--danger); color: var(--danger);
+  border-radius: var(--radius); padding: 8px 10px; font-size: 12.5px; overflow-wrap: anywhere;
+}
+.upd-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+.upd-spinner {
+  width: 14px; height: 14px; flex: 0 0 auto; margin-top: 1px;
+  border: 2px solid var(--border-strong); border-top-color: var(--primary);
+  border-radius: 50%; animation: upd-spin .8s linear infinite;
+}
+@keyframes upd-spin { to { transform: rotate(360deg); } }
+
+/* ------------------------------------------------------------- toasts */
+.toast-root {
+  position: fixed; z-index: 46; left: 50%; bottom: 22px;
+  transform: translateX(-50%);
+  display: flex; flex-direction: column; gap: 8px; align-items: center;
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto; display: flex; align-items: flex-start; gap: 10px;
+  min-width: 240px; max-width: 440px; padding: 10px 12px;
+  border-radius: var(--radius-lg); background: var(--surface);
+  border: 1px solid var(--border-strong); box-shadow: var(--shadow);
+  font-size: 12.5px; color: var(--text);
+}
+.toast.error { border-color: var(--danger); background: var(--danger-soft); color: var(--danger); }
+.toast.success { border-color: var(--success); background: var(--success-soft); color: var(--success); }
+.toast-text { flex: 1 1 auto; overflow-wrap: anywhere; }
+.toast-close { border: none; background: transparent; color: inherit;
+  cursor: pointer; padding: 1px 3px; opacity: .7; font-family: inherit; }
+.toast-close:hover { opacity: 1; }
+.toast.hide { opacity: 0; transition: opacity .18s ease; }
+
+/* Secondary detail line inside a modal or toast error message. */
+.err-detail { margin-top: 5px; font-size: 11.5px; opacity: .85; overflow-wrap: anywhere; }
+
+/* ------------------------------------------- attachment-mode sync dialog */
+.attach-opts { display: flex; flex-direction: column; gap: 8px; margin-bottom: 2px; }
+.attach-opt {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 10px 12px;
+  border: 1.5px solid var(--border-strong); border-radius: var(--radius);
+  background: var(--surface-2); cursor: pointer;
+}
+.attach-opt:hover { border-color: var(--primary); }
+.attach-opt.selected { border-color: var(--primary); background: var(--primary-soft); }
+.attach-opt-radio {
+  width: 15px; height: 15px; margin-top: 2px; flex: 0 0 auto;
+  border: 2px solid var(--border-strong); border-radius: 50%;
+  background: var(--surface);
+  display: flex; align-items: center; justify-content: center;
+}
+.attach-opt-radio::after {
+  content: ""; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--primary); transform: scale(0);
+  transition: transform .12s ease;
+}
+.attach-opt.selected .attach-opt-radio { border-color: var(--primary); }
+.attach-opt.selected .attach-opt-radio::after { transform: scale(1); }
+.attach-opt-text { display: flex; flex-direction: column; gap: 2px; }
+.attach-opt-label { font-size: 13px; font-weight: 600; color: var(--text); }
+.attach-opt-desc { font-size: 11.5px; color: var(--muted); }
 
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 5px; }

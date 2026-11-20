@@ -6,6 +6,7 @@ pywebview application with a JavaScript-to-Python bridge. User data lives in
 
 import datetime as dt
 import functools
+import hashlib
 import json
 import logging
 import os
@@ -42,6 +43,24 @@ def requires_unlock(method):
         if self.lock.enabled and not self.unlocked:
             return {"error_key": "lock.locked"}
         return method(self, *args, **kwargs)
+    return wrapper
+
+
+def user_facing(method):
+    """Bridge wrapper: a failed operation must never die silently.
+
+    The traceback is written to the application log and the frontend
+    receives a translated error key it can report — no raw tracebacks,
+    tokens or credentials cross the bridge. Methods that legitimately
+    return None on user cancellation are unaffected (no exception raised).
+    """
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return method(self, *args, **kwargs)
+        except Exception:
+            logger.error("%s failed\n%s", method.__name__, traceback.format_exc())
+            return {"error_key": "common.internalError"}
     return wrapper
 
 
@@ -195,6 +214,7 @@ class AppApi:
         return [accounts.public_account(a) for a in accounts.all_accounts()]
 
     @requires_unlock
+    @user_facing
     def addAccount(self, display_name, email, host, port):
         try:
             port = int(port)
@@ -207,13 +227,18 @@ class AppApi:
         try:
             account = accounts.create_account(display_name, email, host, port)
         except OSError as exc:
-            return {"error": str(exc)}
+            # The account directory could not be created. The filesystem
+            # detail is safe to show; the cause is logged as well.
+            logger.warning("account creation failed for %s: %s", email, exc)
+            return {"error_key": "accounts.createFailed",
+                    "error_detail": str(exc)}
         if not self.settings.get("active_account_id"):
             self.settings["active_account_id"] = account["id"]
             config.save_settings(self.settings)
         return {"ok": True, "account": accounts.public_account(account)}
 
     @requires_unlock
+    @user_facing
     def updateAccount(self, account_id, display_name, email, host, port):
         try:
             port = int(port)
@@ -260,6 +285,7 @@ class AppApi:
         return bool(self.sync_thread and self.sync_thread.is_alive())
 
     @requires_unlock
+    @user_facing
     def startSync(self, account_id, password, with_attachments=True):
         if self.sync_running():
             return {"error_key": "sync.statusRunning"}
@@ -304,6 +330,7 @@ class AppApi:
         except Exception:
             logger.error("sync engine crashed\n%s", traceback.format_exc())
             self.last_report = {"status": "error", "errors": 1,
+                                "error_key": "common.internalError",
                                 "last_error": "internal error",
                                 "new_messages": 0, "deduped": 0,
                                 "elapsed": 0, "folders_processed": 0,
@@ -369,6 +396,7 @@ class AppApi:
         return {"ok": True}
 
     @requires_unlock
+    @user_facing
     def importCaCertificate(self, account_id):
         """Import a custom trusted CA certificate (PEM) for this account."""
         account = accounts.get_account(account_id)
@@ -381,7 +409,8 @@ class AppApi:
             saved = imaptls.save_ca(account, source)
         except (ssl.SSLError, OSError, ValueError) as exc:
             logger.warning("CA import failed for account %s: %s", account_id, exc)
-            return {"error": str(exc)}
+            return {"error_key": "tls.caFailed",
+                    "error_detail": str(exc)}
         logger.info("imported custom CA for account %s", account_id)
         return {"ok": True, "path": saved}
 
@@ -400,6 +429,7 @@ class AppApi:
     # -------------------------------------------------------------- archive
 
     @requires_unlock
+    @user_facing
     def getStats(self):
         account, paths = self._active_paths()
         if account is None:
@@ -412,6 +442,7 @@ class AppApi:
         return stats
 
     @requires_unlock
+    @user_facing
     def listFolders(self):
         account, paths = self._active_paths()
         if account is None:
@@ -420,6 +451,7 @@ class AppApi:
             return db.list_folders()
 
     @requires_unlock
+    @user_facing
     def queryMessages(self, filters_json, sort="newest", page=1, page_size=50):
         account, paths = self._active_paths()
         if account is None:
@@ -436,6 +468,7 @@ class AppApi:
                                    int(page_size or 50))
 
     @requires_unlock
+    @user_facing
     def getMessage(self, message_id):
         account, paths = self._active_paths()
         if account is None:
@@ -452,6 +485,7 @@ class AppApi:
             return msg
 
     @requires_unlock
+    @user_facing
     def saveAttachment(self, message_id, attachment_id):
         account, paths = self._active_paths()
         if account is None:
@@ -462,17 +496,22 @@ class AppApi:
             return {"error_key": "common.saveFailed"}
         src = os.path.join(paths["root"], att["relpath"])
         if not os.path.exists(src):
-            return {"error_key": "common.saveFailed"}
+            # The row exists but the payload file does not: the message was
+            # archived without attachments. Say so — it is recoverable.
+            return {"error_key": "viewer.attachmentMissing"}
         target = dialogs.save_dialog("MailDaan", att["filename_safe"] or att["filename"])
         if not target:
             return None
         try:
             shutil.copy2(src, target)
         except OSError as exc:
-            return {"error": str(exc)}
+            logger.warning("attachment save failed: %s", exc)
+            return {"error_key": "common.saveFailed",
+                    "error_detail": str(exc)}
         return {"path": target}
 
     @requires_unlock
+    @user_facing
     def saveAllAttachments(self, message_id):
         account, paths = self._active_paths()
         if account is None:
@@ -502,10 +541,18 @@ class AppApi:
             except OSError:
                 pass
         if not saved:
-            return {"error_key": "common.saveFailed"}
+            # Either no payload file exists at all (attachment-free sync —
+            # recoverable) or copying them failed; tell them apart.
+            any_on_disk = any(
+                os.path.exists(os.path.join(paths["root"], att["relpath"]))
+                for att in attachments)
+            if any_on_disk:
+                return {"error_key": "common.saveFailed"}
+            return {"error_key": "viewer.attachmentMissing"}
         return {"path": target_dir, "count": len(saved)}
 
     @requires_unlock
+    @user_facing
     def saveEml(self, message_id):
         account, paths = self._active_paths()
         if account is None:
@@ -525,10 +572,13 @@ class AppApi:
         try:
             shutil.copy2(src, target)
         except OSError as exc:
-            return {"error": str(exc)}
+            logger.warning("eml save failed: %s", exc)
+            return {"error_key": "common.saveFailed",
+                    "error_detail": str(exc)}
         return {"path": target}
 
     @requires_unlock
+    @user_facing
     def downloadMissingAttachments(self, message_ids, password=None):
         """Download attachment payloads for previously skipped messages.
 
@@ -538,7 +588,7 @@ class AppApi:
         """
         account, paths = self._active_paths()
         if account is None:
-            return {"error_key": "common.saveFailed"}
+            return {"error_key": "accounts.none"}
         if not message_ids:
             return {"ok": True, "completed": 0}
         host = account.get("imap_host")
@@ -549,20 +599,22 @@ class AppApi:
         if not password:
             return {"error_key": "config.fillAllFields"}
         completed = 0
+        engine = imap_sync.SyncEngine(
+            host, port, username, password, imap_sync.SyncState(),
+            threading.Event(), db_path=paths["db"], data_dir=paths["root"],
+            account_id=account.get("id", ""),
+            account_email=account.get("email") or "",
+            account=account, with_attachments=True)
+        # The engine's database handle resolves folder ids to IMAP names.
+        # ArchiveDB opens the SQLite file, so it must be closed again.
+        engine.db = storage.ArchiveDB(paths["db"])
         try:
-            import imap_sync
-            import imaptls
-            engine = imap_sync.SyncEngine(
-                host, port, username, password, imap_sync.SyncState(),
-                threading.Event(), db_path=paths["db"], data_dir=paths["root"],
-                account_id=account.get("id", ""),
-                account_email=account.get("email") or "",
-                account=account, with_attachments=True)
-            engine.db = storage.ArchiveDB(paths["db"])
-            # Find folder+UID for each partial message
+            # Partial rows must carry the message id: without it
+            # complete_message() could never upgrade the row and the
+            # downloaded payload would be silently discarded.
             with storage.ArchiveDB(paths["db"]) as db:
                 rows = [dict(r) for r in db.conn.execute(
-                    "SELECT mf.folder_id, mf.uid, m.content_hash "
+                    "SELECT m.id AS message_id, mf.folder_id, mf.uid, m.content_hash "
                     "FROM message_folders mf JOIN messages m ON m.id=mf.message_id "
                     "WHERE m.complete=0 AND mf.message_id IN (%s)"
                     % ",".join("?" * len(message_ids)),
@@ -581,24 +633,48 @@ class AppApi:
                         parsed = imap_sync.parse_message(raw, content_hash)
                         engine._write_files(raw, parsed)
                         with storage.ArchiveDB(paths["db"]) as db:
-                            if db.complete_message(row["message_id"] if "message_id" in row else 0, parsed):
+                            if db.complete_message(row["message_id"], parsed):
                                 completed += 1
                     except Exception as exc:
-                        LOG.warning("attachment download failed for uid %s: %s",
-                                    row.get("uid"), exc)
+                        logger.warning("attachment download failed for uid %s: %s",
+                                       row.get("uid"), exc)
             finally:
                 try:
                     client.logout()
                 except Exception:
                     pass
-        except Exception as exc:
-            LOG.error("attachment download failed\n%s", traceback.format_exc())
-            return {"error": str(exc)}
+        except imap_sync.SyncError as exc:
+            logger.error("attachment download failed: %s", exc)
+            result = {"error_key": exc.key}
+            if exc.detail:
+                result["error_detail"] = exc.detail
+            return result
+        except imaptls.CertificateRejected:
+            # Trust decisions are handled by the synchronization flow; here
+            # the user gets a plain explanation instead of protocol text.
+            logger.error("attachment download failed: untrusted certificate for %s", host)
+            return {"error_key": "sync.tlsError"}
+        except (OSError, ssl.SSLError) as exc:
+            failure = imap_sync._classify_connect_failure(exc, host, port)
+            logger.error("attachment download failed: %s", exc)
+            result = {"error_key": failure.key}
+            if failure.detail:
+                result["error_detail"] = failure.detail
+            return result
+        except Exception:
+            logger.error("attachment download failed\n%s", traceback.format_exc())
+            return {"error_key": "common.internalError"}
+        finally:
+            try:
+                engine.db.close()
+            except Exception:
+                pass
         return {"ok": True, "completed": completed}
 
     # --------------------------------------------------------------- export
 
     @requires_unlock
+    @user_facing
     def exportExcel(self, filters_json, sort="newest"):
         account, paths = self._active_paths()
         if account is None:
@@ -621,7 +697,8 @@ class AppApi:
                                                     target)
         except Exception as exc:
             logger.error("excel export failed\n%s", traceback.format_exc())
-            return {"error": str(exc)}
+            return {"error_key": "export.failed",
+                    "error_detail": str(exc)}
         return summary
 
     # ------------------------------------------------------------ external

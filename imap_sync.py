@@ -15,11 +15,13 @@ import html as _html
 import logging
 import os
 import re
+import socket
 import ssl
 import threading
 import time
 import traceback
 from imapclient import IMAPClient
+from imapclient import exceptions as _imap_exceptions
 
 import config
 import imaptls
@@ -27,6 +29,64 @@ import storage
 
 BATCH_SIZE = 100
 LOG = logging.getLogger("maildaan.sync")
+
+
+class SyncError(Exception):
+    """A user-facing synchronization failure with a stable error key.
+
+    Carrying a key (e.g. 'sync.authFailed') lets the frontend show a
+    concise, translated message while the raw protocol text stays in the
+    application log.
+    """
+
+    def __init__(self, message, key="sync.connectFailed", detail=None):
+        super().__init__(message)
+        self.key = key
+        self.detail = detail
+
+
+# Server responses that indicate a rejected login rather than a network or
+# server problem. Matched case-insensitively against the exception message.
+_AUTH_FAILURE_HINTS = (
+    "authentication failed", "authenticationfailed", "authorization failed",
+    "login failed", "invalid credentials", "auth exchange failed",
+    "application-specific password", "web login required", "access denied",
+    "operation not allowed", "account disabled", "no authentication",
+)
+
+
+def _is_auth_failure(exc) -> bool:
+    if isinstance(exc, _imap_exceptions.LoginError):
+        return True
+    text = str(exc or "").lower()
+    return any(hint in text for hint in _AUTH_FAILURE_HINTS)
+
+
+def _classify_connect_failure(exc, host: str, port: int) -> SyncError:
+    """Map a connection/login exception to a user-facing error class.
+
+    Authentication failures are always separated from network and server
+    problems so the UI never blames the account unless the server actually
+    rejected the credentials. The exception's raw text is never shown to
+    the user; only the safe host:port detail is.
+    """
+    where = f"{host}:{port}"
+    if _is_auth_failure(exc):
+        return SyncError("IMAP authentication failed", key="sync.authFailed")
+    if isinstance(exc, socket.gaierror):
+        return SyncError("IMAP server address not resolved",
+                         key="sync.dnsFailed", detail=host)
+    if isinstance(exc, (socket.timeout, TimeoutError)) or "timed out" in str(exc or "").lower():
+        return SyncError("IMAP connection timed out",
+                         key="sync.timeout", detail=where)
+    if isinstance(exc, ConnectionRefusedError):
+        return SyncError("IMAP connection refused",
+                         key="sync.refused", detail=where)
+    if isinstance(exc, ssl.SSLError):
+        return SyncError("IMAP TLS handshake failed",
+                         key="sync.tlsError", detail=where)
+    return SyncError("IMAP connection failed",
+                     key="sync.connectFailed", detail=where)
 
 
 def html_to_text(value: str) -> str:
@@ -348,7 +408,18 @@ class SyncEngine:
             details["pin_mismatch"] = pin_mismatch
             raise imaptls.CertificateRejected(str(exc), pin_mismatch, details) \
                 from exc
-        client.login(self.username, self.password)
+        try:
+            client.login(self.username, self.password)
+        except Exception as exc:
+            # Keep the raw server text in the log only; the user gets a
+            # classified, translated message. (The password is never part
+            # of an imapclient login failure.)
+            if _is_auth_failure(exc):
+                LOG.warning("IMAP login rejected for %s: %s", self.host, exc)
+                raise SyncError("IMAP authentication failed",
+                                key="sync.authFailed") from exc
+            LOG.error("IMAP login failed for %s: %s", self.host, exc)
+            raise _classify_connect_failure(exc, self.host, self.port) from exc
         return client
 
     def _extract_raw(self, fetch_result, uid):
@@ -422,16 +493,22 @@ class SyncEngine:
                     "account_id": self.state.account_id,
                     "account_email": self.state.account_email}
         except Exception as exc:
-            LOG.error("IMAP connection failed: %s", exc)
+            # Classified failure: the user sees a concise translated
+            # message; the technical cause stays in the log.
+            failure = exc if isinstance(exc, SyncError) else \
+                _classify_connect_failure(exc, self.host, self.port)
+            LOG.error("IMAP connection failed for %s:%s: %s",
+                      self.host, self.port, exc)
             self.db.finish_sync_log(log_id, "error", 0, 0, 1, time.time() - started)
             self.db.close()
             with self.state.lock:
                 self.state.status = "error"
-                self.state.last_error = str(exc)
+                self.state.last_error = str(failure)
                 self.state.running = False
-            return {"status": "error", "error": str(exc), "new_messages": 0,
-                    "deduped": 0, "errors": 1, "folders_processed": 0,
-                    "elapsed": time.time() - started,
+            return {"status": "error", "error": str(failure),
+                    "error_key": failure.key, "error_detail": failure.detail,
+                    "new_messages": 0, "deduped": 0, "errors": 1,
+                    "folders_processed": 0, "elapsed": time.time() - started,
                     "account_id": self.state.account_id,
                     "account_email": self.state.account_email}
 
@@ -510,6 +587,7 @@ class SyncEngine:
             err_total += 1
             with self.state.lock:
                 self.state.last_error = str(exc)
+            self._run_error_key = "sync.failed"
         finally:
             try:
                 client.logout()
@@ -540,6 +618,7 @@ class SyncEngine:
             "total_attachments": stats.get("attachments", 0),
             "total_folders": stats.get("folders", 0),
             "error_folders": list(self.state.error_folders),
+            "error_key": getattr(self, "_run_error_key", None),
             "last_error": self.state.last_error,
         }
 

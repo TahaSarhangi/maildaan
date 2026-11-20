@@ -14,6 +14,7 @@
     "settings": "Settings",
     "syncEmails": "Sync Emails",
     "exportExcel": "Export to Excel",
+    "updates": "Updates",
     "exit": "Exit Application"
   },
   "languageSwitchTitle": "Language",
@@ -88,6 +89,7 @@
     "removeConfirm": "Remove {account} from MailDaan? The local archive on disk is kept and can be read again later.",
     "none": "No email account",
     "notFound": "Account not found.",
+    "createFailed": "The account could not be created.",
     "removeWhileSyncing": "This account is being synchronized. Cancel the synchronization first.",
     "running": "Syncing"
   },
@@ -145,8 +147,21 @@
     "statusCancelled": "Cancelled",
     "statusError": "Failed",
     "syncActiveExit": "Synchronization is still running. Exit anyway? Progress will be saved and the next sync resumes from the checkpoint.",
+    "attachModeTitle": "Synchronization Settings",
+    "attachModeBody": "Choose how to synchronize {account}.",
     "attachModeWith": "Download emails with attachments",
-    "attachModeWithout": "Download emails without attachments"
+    "attachModeWithout": "Download emails without attachments",
+    "attachModeWithDesc": "Every message is downloaded together with its attachment files.",
+    "attachModeWithoutDesc": "Only message text is downloaded; attachments can be fetched later.",
+    "attachModeHint": "When you start the synchronization, you choose whether attachments are downloaded.",
+    "attachModeCancel": "Cancel",
+    "authFailed": "The IMAP server rejected the login. Check the email address and password for this account.",
+    "dnsFailed": "The IMAP server address could not be found. Check the IMAP server name in the account settings.",
+    "connectFailed": "Could not connect to the IMAP server.",
+    "timeout": "The connection to the IMAP server timed out.",
+    "refused": "The IMAP server refused the connection.",
+    "tlsError": "A secure connection to the IMAP server could not be established.",
+    "failed": "Synchronization failed before it could finish."
   },
 
   "report": {
@@ -224,7 +239,8 @@
     "htmlNotice": "This message has no plain-text part. Displayed from original HTML with scripts and remote content disabled.",
     "folders": "Folders",
     "downloadMissingAttachments": "Download missing attachments",
-    "missingDownloaded": "Downloaded attachments for {n} message(s)."
+    "missingDownloaded": "Downloaded attachments for {n} message(s).",
+    "attachmentMissing": "The attachment file is missing from the local archive. Use “Download missing attachments” to fetch it from the server again."
   },
 
   "empty": {
@@ -257,17 +273,26 @@
     "dismiss": "Dismiss",
     "downloading": "Downloading…",
     "cancel": "Cancel",
+    "cancelled": "The download was cancelled.",
     "verify": "Verifying checksum…",
     "verified": "Installer verified.",
     "checksumFail": "Checksum verification failed.",
     "checksumMissing": "Checksum not available — cannot install.",
     "install": "Install Update",
     "installing": "Installing…",
+    "installHint": "MailDaan will close and the verified installer will open.",
+    "installFailed": "The update could not be installed.",
+    "downloadFailed": "The update could not be downloaded.",
+    "retry": "Check Again",
     "checkNow": "Check for Updates",
     "checking": "Checking…",
     "upToDate": "You are up to date.",
+    "upToDateBody": "You are running the latest version of MailDaan.",
+    "currentVersion": "Current version",
+    "newVersion": "Version {version} is available.",
     "offline": "Update check unavailable (offline).",
-    "error": "Update check failed."
+    "error": "Update check failed.",
+    "updateReady": "The update is downloaded and verified."
   },
 
   "common": {
@@ -281,6 +306,7 @@
     "savedToFile": "Saved to:",
     "saveFailed": "Could not save the file.",
     "startupFailed": "MailDaan could not start its window. The cause was recorded in the MailDaan log folder. Please restart MailDaan; if the problem persists, reinstall it.",
+    "internalError": "This operation could not be completed. The cause was recorded in the MailDaan log folder.",
     "seconds": "s",
     "messagesPerSecond": "msg/s",
     "minutes": "min"

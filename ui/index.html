@@ -87,6 +87,17 @@
             <svg class="ic"><use href="#i-globe"/></svg>
             <span id="langLabel">English</span>
           </button>
+          <div class="update-wrap">
+            <button class="sidebar-link update-link" id="btnUpdate"
+                    data-i18n-title="update.checkNow" title="Check for Updates"
+                    aria-haspopup="dialog" aria-expanded="false"
+                    aria-label="Updates">
+              <svg class="ic"><use href="#i-download"/></svg>
+              <span class="update-badge hidden" id="updateBadge" aria-hidden="true"></span>
+            </button>
+            <div class="update-popover hidden" id="updatePopover" role="dialog"
+                 aria-label="Updates"></div>
+          </div>
           <button class="sidebar-link danger" id="btnExit">
             <svg class="ic"><use href="#i-exit"/></svg>
             <span data-i18n="nav.exit">Exit Application</span>
@@ -356,13 +367,6 @@
               </div>
             </div>
             <div class="card settings-card">
-              <h2 class="card-title" data-i18n="update.title">Updates</h2>
-              <div id="updateStatus" class="update-status"></div>
-              <div class="form-actions">
-                <button class="btn btn-primary" id="btnCheckUpdates" data-i18n="update.checkNow">Check for Updates</button>
-              </div>
-            </div>
-            <div class="card settings-card">
               <h2 class="card-title" data-i18n="settings.accountTitle">Email Account Settings</h2>
               <label class="field"><span data-i18n="accounts.account">Account</span>
                 <select id="settingsAccount" class="select"></select></label>
@@ -408,6 +412,7 @@
   <div id="modalOverlay" class="modal-overlay hidden">
     <div class="modal-card" id="modalCard"></div>
   </div>
+  <div id="toastRoot" class="toast-root" aria-live="polite" aria-atomic="false"></div>
   <script src="app.js"></script>
 </body>
 </html>

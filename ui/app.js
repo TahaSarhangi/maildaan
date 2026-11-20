@@ -33,7 +33,15 @@ const state = {
   languageChosen: false,
   searchSeq: 0,
   openMessageId: null,
-  updateNotified: false,
+  update: {
+    status: "idle",        // idle | checking | uptodate | available | downloading | ready | error
+    version: "",
+    notes: "",
+    percent: 0,
+    error: "",
+    checked: false,        // at least one check has completed
+    popoverOpen: false,
+  },
 };
 
 /* ------------------------------------------------------------------ helpers */
@@ -271,6 +279,49 @@ function errorModal(res) {
   infoModal(t("common.error", "Error"), t(key, key));
 }
 
+/* One reusable user-facing failure report. A failed bridge call carries
+   either an error_key (translated here) or a raw `error` string shown as a
+   secondary detail. Tracebacks, tokens and credentials never reach this
+   layer. `opts.toast` uses the non-blocking toast instead of the modal. */
+function errorResultHtml(res) {
+  if (!res) return null;
+  const key = res.error_key;
+  const detail = res.error_detail || (!key ? (res.error || "") : "");
+  if (!key && !res.error) return null;
+  const html = "<div>" + esc(t(key || "common.error", key || "common.error")) + "</div>" +
+    (detail ? '<div class="err-detail">' + esc(detail) + "</div>" : "");
+  return html;
+}
+
+function reportError(res, opts) {
+  const html = errorResultHtml(res);
+  if (html === null) return false;
+  if (opts && opts.toast) toast(html, "error");
+  else showModal(t("common.error", "Error"), html,
+    [{ label: t("common.close", "Close"), primary: true }]);
+  return true;
+}
+
+/* Small, non-intrusive notification for harmless events; errors stay
+   longer and are always dismissible. */
+function toast(html, kind) {
+  const root = $("toastRoot");
+  if (!root || html === null || html === undefined) return;
+  const el = document.createElement("div");
+  el.className = "toast " + (kind || "info");
+  el.innerHTML = '<span class="toast-text">' + html + "</span>" +
+    '<button class="toast-close" aria-label="' +
+      esc(t("common.close", "Close")) + '">' + icon("x") + "</button>";
+  root.appendChild(el);
+  const close = () => {
+    el.classList.add("hide");
+    setTimeout(() => { if (el.parentNode) el.remove(); }, 200);
+  };
+  el.querySelector(".toast-close").addEventListener("click", close);
+  setTimeout(close, kind === "error" ? 9000 : 4500);
+  return close;
+}
+
 function askPassword(title, body, onSubmit) {
   showModal(title, body +
     '<input type="password" id="modalPassword" class="modal-input" placeholder="' +
@@ -278,7 +329,7 @@ function askPassword(title, body, onSubmit) {
     [
       { label: t("common.cancel", "Cancel") },
       {
-        label: t("nav.syncEmails", "Sync"), primary: true, onClick: () => {
+        label: t("sync.start", "Start Synchronization"), primary: true, onClick: () => {
           const node = $("modalPassword");
           onSubmit(node ? node.value : "");
         }
@@ -387,7 +438,10 @@ function bindAccountForm() {
       return fail(t("config.fillAllFields", "Fill all fields"));
     err.classList.add("hidden");
     const res = await api().addAccount(display, email, host, port);
-    if (res && res.error_key) return fail(t(res.error_key, res.error_key));
+    if (res && res.error_key)
+      return fail(t(res.error_key, res.error_key) +
+        (res.error_detail ? " — " + res.error_detail : ""));
+    if (res && res.error) return fail(res.error);
     if (!res || !res.account) return fail(t("common.error", "Error"));
     state.accounts = await api().getAccounts();
     state.activeAccountId = res.account.id;
@@ -395,7 +449,8 @@ function bindAccountForm() {
     if (state.accountMode === "first" && pass) {
       show("sync");
       renderSyncScreen();
-      startSync(res.account.id, pass);
+      askAttachmentMode(res.account, (withAttachments) =>
+        startSync(res.account.id, pass, withAttachments));
       return;
     }
     goArchive();
@@ -409,14 +464,18 @@ function bindAccountForm() {
 async function loadFolders() {
   const folders = await api().listFolders();
   const stats = await api().getStats();
+  if (folders && folders.error_key) toast(errorResultHtml(folders), "error");
+  if (stats && stats.error_key) toast(errorResultHtml(stats), "error");
+  const folderList = Array.isArray(folders) ? folders : [];
+  const stat = stats && !stats.error_key ? stats : { messages: 0 };
   const allName = t("folders.allEmails", "All Emails");
   const activeId = state.filters.folder_id;
   let html =
     '<li class="folder-item' + (activeId == null ? " active" : "") + '" data-id="">' +
     icon("mail") +
     '<span class="folder-name">' + esc(allName) + "</span>" +
-    '<span class="folder-count">' + toDigits(stats.messages || 0) + "</span></li>";
-  for (const f of folders) {
+    '<span class="folder-count">' + toDigits(stat.messages || 0) + "</span></li>";
+  for (const f of folderList) {
     const name = state.folderDisplay[f.display_name] || f.display_name;
     const ic = FOLDER_ICONS[f.display_name] || "folder";
     html +=
@@ -440,7 +499,7 @@ async function loadFolders() {
   const sel = $("filterFolder");
   if (sel) {
     sel.innerHTML = '<option value="">' + esc(t("filters.anyFolder", "All folders")) + "</option>";
-    for (const f of folders) {
+    for (const f of folderList) {
       const opt = document.createElement("option");
       opt.value = f.id;
       opt.textContent = state.folderDisplay[f.display_name] || f.display_name;
@@ -525,6 +584,15 @@ async function loadMessages() {
   const result = await api().queryMessages(JSON.stringify(filters), state.sort, state.page, PAGE_SIZE);
   // Ignore stale asynchronous results when the user changed the query.
   if (seq !== state.searchSeq) return;
+  if (!result || result.error_key) {
+    if (result && result.error_key) toast(errorResultHtml(result), "error");
+    state.total = 0;
+    $("messageList").innerHTML = emptyStateHtml("noResults");
+    bindEmptyActions();
+    renderSearchSuggestion(null);
+    renderPagination();
+    return;
+  }
   state.total = result.total;
   renderSearchSuggestion(result.suggestion || null);
   const list = $("messageList");
@@ -616,7 +684,12 @@ function renderDetailEmpty() {
 async function openMessage(id) {
   state.openMessageId = id;
   const m = await api().getMessage(id);
-  if (!m) { infoModal(t("common.error", "Error"), t("viewer.notFound", "Message not found.")); return; }
+  if (!m || m.error_key) {
+    if (m && m.error_key) reportError(m, { toast: true });
+    else infoModal(t("common.error", "Error"), t("viewer.notFound", "Message not found."));
+    renderDetailEmpty();
+    return;
+  }
   const subject = m.subject || t("viewer.noSubject", "(No subject)");
   let meta = "";
   const addRow = (label, value) => {
@@ -719,19 +792,24 @@ async function downloadMissingAttachments(messageIds) {
     t("sync.title", "Synchronization"),
     esc(t("config.password", "Password")) + " — <b>" + esc(account.email) + "</b>",
     async (pw) => {
-      const res = await api().downloadMissingAttachments(messageIds, pw);
-      if (res && res.error_key) { errorModal(res); return; }
-      if (res && res.error) { infoModal(t("common.error", "Error"), res.error); return; }
-      infoModal(t("common.ok", "OK"), t("viewer.missingDownloaded", "Downloaded attachments for {n} message(s).").replace("{n}", res.completed || 0));
+      let res = null;
+      try {
+        res = await api().downloadMissingAttachments(messageIds, pw);
+      } catch (e) {
+        reportError({ error_key: "common.internalError" });
+        return;
+      }
+      if (reportError(res)) return;
+      toast(esc(t("viewer.missingDownloaded",
+        "Downloaded attachments for {n} message(s).")).replace("{n}", toDigits(res.completed || 0)), "success");
       if (state.openMessageId) openMessage(state.openMessageId);
     });
 }
 
 function fileResult(r) {
   if (!r) return;
-  if (r.error) infoModal(t("common.saveFailed", "Save failed"), r.error);
-  else if (r.error_key) errorModal(r);
-  else infoModal(t("common.ok", "OK"), t("common.savedToFile", "Saved to:") + "\n" + r.path);
+  if (r.error_key || r.error) { reportError(r); return; }
+  toast(esc(t("common.savedToFile", "Saved to:")) + "<br>" + esc(r.path), "success");
 }
 
 /* --------------------------------------------------------------------- sync */
@@ -777,10 +855,11 @@ function renderSyncControls() {
 async function onStartSync() {
   const account = activeAccount();
   if (!account) { openAccountForm("add"); return; }
-  askPassword(
-    t("sync.title", "Synchronization"),
-    esc(t("config.password", "Password")) + " — <b>" + esc(account.email) + "</b>",
-    (pw) => startSync(account.id, pw));
+  askAttachmentMode(account, (withAttachments) =>
+    askPassword(
+      t("sync.title", "Synchronization"),
+      esc(t("config.password", "Password")) + " — <b>" + esc(account.email) + "</b>",
+      (pw) => startSync(account.id, pw, withAttachments)));
 }
 
 function renderSyncStatus(s) {
@@ -802,14 +881,9 @@ function renderSyncIdle() {
     '<p class="form-subtitle">' +
       esc(t("sync.idleBody", "Synchronization downloads all messages from every IMAP folder into the local archive. It resumes from the last checkpoint when interrupted.")) +
     "</p>" +
-    '<div class="form-group">' +
-      '<label class="form-label">' + esc(t("sync.attachMode", "Attachment mode")) + '</label>' +
-      '<div class="seg-group" id="segAttachMode">' +
-        '<button class="seg-btn" data-mode="with" data-i18n="sync.attachModeWith">Download emails with attachments</button>' +
-        '<button class="seg-btn" data-mode="without" data-i18n="sync.attachModeWithout">Download emails without attachments</button>' +
-      "</div>" +
-      '<p class="form-subtitle">' + esc(t("sync.attachModeHint", "Without attachments: headers, bodies and folder metadata are downloaded, but attachment payloads are skipped. You can download the attachments later for any message.")) + '</p>' +
-    "</div>" +
+    '<p class="form-subtitle">' +
+      esc(t("sync.attachModeHint", "When you start the synchronization, you choose whether attachments are downloaded.")) +
+    "</p>" +
     '<div class="progress-block">' +
       '<div class="progress-head"><span>' + esc(t("sync.title", "Synchronization")) + '</span><span class="pct">0%</span></div>' +
       '<div class="progress-track"><div class="progress-fill" style="width:0%"></div></div>' +
@@ -818,30 +892,71 @@ function renderSyncIdle() {
       '<div class="progress-head"><span>' + esc(t("sync.currentFolder", "Current folder")) + '</span><span class="pct">0%</span></div>' +
       '<div class="progress-track"><div class="progress-fill secondary" style="width:0%"></div></div>' +
     '</div>';
-  setSegMode();
 }
 
-function setSegMode() {
-  const seg = $("segAttachMode");
-  if (!seg) return;
-  seg.querySelectorAll(".seg-btn").forEach((b) => {
-    b.classList.toggle("active", b.dataset.mode === state.attachMode);
-    b.addEventListener("click", () => {
-      state.attachMode = b.dataset.mode;
-      setSegMode();
+/* The attachment-mode dialog shown before every synchronization. The mode
+   always defaults to "with attachments"; cancelling terminates the flow
+   before any IMAP connection is made. */
+function askAttachmentMode(account, onStart) {
+  let mode = "with";
+  const option = (value, label, desc) =>
+    '<div class="attach-opt" data-mode="' + value + '" role="radio" ' +
+      'aria-checked="false" tabindex="0">' +
+      '<span class="attach-opt-radio"></span>' +
+      '<span class="attach-opt-text">' +
+        '<span class="attach-opt-label">' + esc(label) + "</span>" +
+        '<span class="attach-opt-desc">' + esc(desc) + "</span>" +
+      "</span>" +
+    "</div>";
+  const name = esc(account.display_name || account.email);
+  showModal(
+    t("sync.attachModeTitle", "Synchronization Settings"),
+    '<p style="margin:0 0 14px">' +
+      esc(t("sync.attachModeBody", "Choose how to synchronize."))
+        .replace("{account}", "<b>" + name + "</b>") +
+    "</p>" +
+    '<div class="attach-opts" role="radiogroup">' +
+      option("with", t("sync.attachModeWith", "Download emails with attachments"),
+             t("sync.attachModeWithDesc", "With attachments")) +
+      option("without", t("sync.attachModeWithout", "Download emails without attachments"),
+             t("sync.attachModeWithoutDesc", "Without attachments")) +
+    "</div>",
+    [
+      { label: t("sync.attachModeCancel", "Cancel") },
+      {
+        label: t("sync.start", "Start Synchronization"), primary: true,
+        onClick: () => onStart(mode === "with")
+      }
+    ]);
+  const card = $("modalCard");
+  const opts = card.querySelectorAll(".attach-opt");
+  const select = (el) => {
+    mode = el.getAttribute("data-mode");
+    opts.forEach((x) => {
+      const on = x === el;
+      x.classList.toggle("selected", on);
+      x.setAttribute("aria-checked", on ? "true" : "false");
+    });
+  };
+  opts.forEach((el) => {
+    el.addEventListener("click", () => select(el));
+    el.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(el); }
     });
   });
+  if (opts.length) select(opts[0]);
 }
 
-async function startSync(accountId, password) {
+async function startSync(accountId, password, withAttachments) {
   state.syncReport = null;
   state.pendingReport = null;
   if (!password) { renderSyncScreen(); return; }
+  state.attachMode = withAttachments === false ? "without" : "with";
   state.syncRunning = true;
   state.syncAccountId = accountId;
   renderAccounts();
   renderSyncScreen();
-  const res = await api().startSync(accountId, password, state.attachMode === "without" ? false : true);
+  const res = await api().startSync(accountId, password, withAttachments !== false);
   if (res && res.error_key) {
     state.syncRunning = false;
     state.syncAccountId = null;
@@ -853,9 +968,22 @@ async function startSync(accountId, password) {
 }
 
 let pollTimer = null;
+let pollErrorShown = false;
 async function pollProgress() {
   if (pollTimer) clearTimeout(pollTimer);
   const s = await api().getSyncProgress();
+  if (!s || s.error_key) {
+    // The progress endpoint itself failed. Report it once and keep
+    // watching: the sync thread may still be running fine, and the
+    // progress view must never freeze on a spinner.
+    if (s && s.error_key && !pollErrorShown) {
+      reportError(s, { toast: true });
+      pollErrorShown = true;
+    }
+    pollTimer = setTimeout(pollProgress, 2000);
+    return;
+  }
+  pollErrorShown = false;
   if (s.sync_account_id && s.sync_account_id !== state.syncAccountId) {
     state.syncAccountId = s.sync_account_id;
     renderAccounts();
@@ -942,6 +1070,13 @@ function renderReport(r) {
   }[r.status] || "statusCompleted";
   const account = state.accounts.find((a) => a.id === (r.account_id || state.syncAccountId));
   const accountName = account ? (account.display_name || account.email) : (r.account_email || "");
+  // A classified failure carries a translated error key; the raw server
+  // text is kept out of the user-facing report.
+  const errorBlock = r.error_key
+    ? '<div class="sync-error">' + esc(t(r.error_key, r.error_key)) +
+        (r.error_detail ? '<div class="err-detail">' + esc(r.error_detail) + "</div>" : "") +
+      "</div>"
+    : (r.last_error ? '<div class="sync-error">' + esc(r.last_error) + "</div>" : "");
   const card = $("syncCard");
   card.innerHTML =
     '<h2 class="card-title">' + esc(t("report.title", "Report")) + "</h2>" +
@@ -963,7 +1098,7 @@ function renderReport(r) {
     (r.error_folders && r.error_folders.length
       ? '<div class="sync-error">' + esc(t("report.errorFolders", "Error folders")) + ": " +
         esc(r.error_folders.join(", ")) + "</div>" : "") +
-    (r.last_error ? '<div class="sync-error">' + esc(r.last_error) + "</div>" : "") +
+    errorBlock +
     '<div class="sync-actions">' +
     '<button class="btn btn-primary" id="btnOpenViewer">' + icon("archive") +
       esc(t("report.openViewer", "Open Archived Emails")) + "</button>" +
@@ -1039,10 +1174,7 @@ async function onImportCa(r) {
   const accountId = r.account_id || state.syncAccountId;
   const res = await api().importCaCertificate(accountId);
   if (!res) return;  // file picker cancelled
-  if (res.error) {
-    infoModal(t("tls.caFailed", "The selected file is not a usable PEM certificate authority."), res.error);
-    return;
-  }
+  if (res.error_key || res.error) { reportError(res); return; }
   restartSyncAfterTrust(accountId);
 }
 
@@ -1053,7 +1185,7 @@ function restartSyncAfterTrust(accountId) {
   askPassword(
     t("sync.title", "Synchronization"),
     esc(t("config.password", "Password")) + " — <b>" + esc(account.email) + "</b>",
-    (pw) => startSync(account.id, pw));
+    (pw) => startSync(account.id, pw, state.attachMode !== "without"));
 }
 
 /* ------------------------------------------------------------------- export */
@@ -1065,132 +1197,350 @@ async function onExportExcel() {
   state.busy = true;
   const btn = $("btnExport");
   btn.disabled = true;
-  const filters = state.view === "archive" ? currentFilters() : {};
-  const res = await api().exportExcel(JSON.stringify(filters), state.sort);
-  btn.disabled = false;
-  state.busy = false;
-  if (!res) return;
-  if (res.error) infoModal(t("export.failed", "Export failed"), res.error);
-  else if (res.error_key) errorModal(res);
-  else infoModal(t("export.done", "Done"),
-    toDigits(res.messages) + " " + esc(t("export.messages", "messages")) + " • " +
-    toDigits(res.contacts) + " " + esc(t("export.contacts", "contacts")) + " • " +
-    toDigits(res.organizations) + " " + esc(t("export.organizations", "organizations")) +
-    "<br>" + esc(t("common.savedToFile", "Saved to:")) + "<br>" + esc(res.path));
+  try {
+    const filters = state.view === "archive" ? currentFilters() : {};
+    const res = await api().exportExcel(JSON.stringify(filters), state.sort);
+    if (!res) return;                       // save dialog cancelled
+    if (res.error_key || res.error) { reportError(res); return; }
+    toast(esc(t("export.done", "Excel report created.")) + "<br>" +
+      toDigits(res.messages) + " " + esc(t("export.messages", "messages")) + " • " +
+      toDigits(res.contacts) + " " + esc(t("export.contacts", "contacts")) + " • " +
+      toDigits(res.organizations) + " " + esc(t("export.organizations", "organizations")) +
+      "<br>" + esc(res.path), "success");
+  } finally {
+    btn.disabled = false;
+    state.busy = false;
+  }
 }
 
 /* ----------------------------------------------------------------- settings */
 
-function renderUpdateStatus(res) {
-  const box = $("updateStatus");
-  if (!box) return;
-  if (!res || !res.available) {
-    box.innerHTML = '<div class="update-uptodate">' + esc(t("update.upToDate", "You are up to date.")) + "</div>";
-    state.updateNotified = false;
-    return;
-  }
-  state.updateNotified = true;
-  box.innerHTML =
-    '<div class="update-available">' +
-      '<h4 data-i18n="update.title">' + esc(t("update.title", "Update Available")) + "</h4>" +
-      '<p data-i18n="update.body">' + esc(t("update.body", "A new version of MailDaan is available.")) + "</p>" +
-      '<div class="update-version"><b>' + esc(t("update.version", "Version")) + ':</b> ' + esc(res.version || "") + '</div>' +
-      (res.notes ? '<div class="update-notes">' + esc(res.notes) + '</div>' : "") +
-      '<div class="update-actions">' +
-        '<button class="btn btn-primary" id="btnDownloadUpdate" data-i18n="update.download">' + esc(t("update.download", "Download Update")) + '</button>' +
-        '<button class="btn" id="btnDismissUpdate" data-i18n="update.dismiss">' + esc(t("update.dismiss", "Dismiss")) + '</button>' +
-      '</div>' +
-    '</div>';
-  const dlBtn = $("btnDownloadUpdate");
-  const disBtn = $("btnDismissUpdate");
-  if (dlBtn) dlBtn.addEventListener("click", startUpdateDownload);
-  if (disBtn) disBtn.addEventListener("click", () => { box.innerHTML = ""; state.updateNotified = false; });
+/* ------------------------------------------------------------------ updates
+   Compact, ChatGPT-style update control: a small icon above the Exit button
+   in the sidebar bottom section, with a subtle badge when a newer release is
+   available and a small contextual popover for checking, downloading,
+   verifying and installing. The updater backend (GitHub API, SHA-256
+   verification, safe installation) is unchanged. */
+
+const UPDATE = {
+  IDLE: "idle", CHECKING: "checking", UPTODATE: "uptodate",
+  AVAILABLE: "available", DOWNLOADING: "downloading", READY: "ready", ERROR: "error",
+};
+
+function updateBadgeVisible() {
+  return state.update.status === UPDATE.AVAILABLE || state.update.status === UPDATE.READY;
 }
 
+function refreshUpdateChrome() {
+  const badge = $("updateBadge");
+  if (badge) {
+    badge.classList.toggle("hidden", !updateBadgeVisible());
+    badge.classList.toggle("ready", state.update.status === UPDATE.READY);
+  }
+  const btn = $("btnUpdate");
+  if (btn) {
+    const u = state.update;
+    btn.setAttribute("aria-expanded", u.popoverOpen ? "true" : "false");
+    let title = t("update.checkNow", "Check for Updates");
+    if (u.status === UPDATE.AVAILABLE)
+      title = t("update.newVersion", "Version available").replace("{version}", u.version || "");
+    else if (u.status === UPDATE.READY) title = t("update.install", "Install Update");
+    else if (u.status === UPDATE.DOWNLOADING) title = t("update.downloading", "Downloading…");
+    btn.title = title;
+    btn.setAttribute("aria-label", title);
+  }
+}
+
+function toggleUpdatePopover() {
+  if (state.update.popoverOpen) closeUpdatePopover();
+  else openUpdatePopover();
+}
+
+function openUpdatePopover() {
+  state.update.popoverOpen = true;
+  $("updatePopover").classList.remove("hidden");
+  refreshUpdateChrome();
+  // Opening the popover always reports the current state: pick up an
+  // in-flight or finished download, then perform a fresh check.
+  refreshUpdateProgress().then(() => {
+    if (state.update.status !== UPDATE.DOWNLOADING &&
+        state.update.status !== UPDATE.READY) {
+      updateCheck(true);
+    }
+  });
+  if (state.update.status === UPDATE.IDLE) state.update.status = UPDATE.CHECKING;
+  renderUpdatePopover();
+}
+
+function closeUpdatePopover() {
+  state.update.popoverOpen = false;
+  $("updatePopover").classList.add("hidden");
+  refreshUpdateChrome();
+}
+
+/* Translate the updater's stable error strings. */
+function mapUpdateError(err) {
+  const text = String(err || "");
+  if (text === "cancelled") return t("update.cancelled", "The download was cancelled.");
+  if (text.indexOf("checksum verification failed") !== -1)
+    return t("update.checksumFail", "Checksum verification failed.");
+  if (text.indexOf("checksum unavailable") !== -1)
+    return t("update.checksumMissing", "Checksum not available.");
+  if (text.indexOf("installer not verified") !== -1)
+    return t("update.installFailed", "The update could not be installed.");
+  return t("update.downloadFailed", "The update could not be downloaded.");
+}
+
+function appVersionDisplay() {
+  return (window.__maildaanVersion || "") || "1.2.0";
+}
+
+function renderUpdatePopover() {
+  const box = $("updatePopover");
+  if (!box) return;
+  const u = state.update;
+  const head = '<div class="upd-head"><span class="upd-title">' +
+    esc(t("nav.updates", "Updates")) + "</span></div>";
+  const actions = (buttons) => '<div class="upd-actions">' + buttons + "</div>";
+  const btn = (id, label, primary, danger) =>
+    '<button class="btn small' + (primary ? " btn-primary" : "") +
+      (danger ? " btn-danger" : "") + '" id="' + id + '">' + esc(label) + "</button>";
+  let body = "";
+  let footer = "";
+  switch (u.status) {
+    case UPDATE.CHECKING:
+      body = '<div class="upd-message"><span class="upd-spinner"></span>' +
+        '<span>' + esc(t("update.checking", "Checking…")) + "</span></div>";
+      break;
+    case UPDATE.UPTODATE:
+      body = '<div class="upd-message">' + icon("check") +
+        '<span class="upd-ok">' +
+        esc(t("update.upToDateBody", "You are running the latest version of MailDaan.")) +
+        "</span></div>" +
+        '<p class="upd-version" style="margin-top:8px">' +
+        esc(t("update.currentVersion", "Current version")) + ": " +
+        esc(appVersionDisplay()) + "</p>";
+      footer = actions(btn("updRetry", t("update.retry", "Check Again")));
+      break;
+    case UPDATE.AVAILABLE:
+      body = '<p class="upd-version">' +
+        esc(t("update.newVersion", "Version {version} is available.")
+          .replace("{version}", u.version || "")) + "</p>" +
+        (u.notes ? '<div class="upd-notes">' + esc(u.notes) + "</div>" : "");
+      footer = actions(btn("updDownload", t("update.download", "Download Update"), true) +
+        btn("updClose", t("common.close", "Close")));
+      break;
+    case UPDATE.DOWNLOADING:
+      body = '<div class="upd-message"><span class="upd-spinner"></span>' +
+        '<span>' + esc(t("update.downloading", "Downloading…")) + "</span></div>" +
+        '<div class="progress-block" style="margin:10px 0 0">' +
+        '<div class="progress-head"><span class="pct">' + toDigits(u.percent || 0) +
+        '%</span></div>' +
+        '<div class="progress-track"><div class="progress-fill" style="width:' +
+        (u.percent || 0) + '%"></div></div>' +
+        "</div>";
+      footer = actions(btn("updCancel", t("update.cancel", "Cancel"), false, true));
+      break;
+    case UPDATE.READY:
+      body = '<div class="upd-message">' + icon("check") +
+        '<span class="upd-ok">' + esc(t("update.verified", "Installer verified.")) +
+        "</span></div>" +
+        '<p class="upd-body" style="margin:6px 0 0">' +
+        esc(t("update.installHint", "MailDaan will close and the verified installer will open.")) +
+        "</p>";
+      footer = actions(btn("updInstall", t("update.install", "Install Update"), true) +
+        btn("updClose", t("common.close", "Close")));
+      break;
+    case UPDATE.ERROR:
+      body = '<div class="upd-error">' +
+        esc(u.error || t("update.error", "Update check failed.")) + "</div>";
+      footer = actions(btn("updRetry", t("update.retry", "Check Again"), true));
+      break;
+    default:
+      body = '<div class="upd-body">' +
+        esc(t("update.upToDateBody", "You are running the latest version of MailDaan.")) +
+        "</div>";
+      footer = actions(btn("updRetry", t("update.retry", "Check Again")));
+      break;
+  }
+  box.innerHTML = head + '<div class="upd-body">' + body + "</div>" + footer;
+
+  const bind = (id, fn) => {
+    const el = $(id);
+    if (el) el.addEventListener("click", fn);
+  };
+  bind("updRetry", () => updateCheck(true));
+  bind("updDownload", updateDownload);
+  bind("updCancel", updateCancel);
+  bind("updInstall", updateInstall);
+  bind("updClose", closeUpdatePopover);
+}
+
+/* Automatic check shortly after boot: only lights the sidebar badge. */
 async function checkForUpdatesAuto() {
-  if (state.updateNotified) return;
+  if (state.update.checked) return;
   try {
     const res = await api().checkForUpdates(false);
+    state.update.checked = true;
     if (res && res.available) {
-      renderUpdateStatus(res);
+      state.update.status = UPDATE.AVAILABLE;
+      state.update.version = res.version || "";
+      state.update.notes = res.notes || "";
+      refreshUpdateChrome();
     }
   } catch (e) {
-    // silent
+    /* harmless: no badge, nothing to report */
   }
 }
 
-async function startUpdateDownload() {
-  const box = $("updateStatus");
-  const btn = $("btnDownloadUpdate");
-  const disBtn = $("btnDismissUpdate");
-  if (btn) btn.disabled = true;
-  if (disBtn) disBtn.disabled = true;
-  box.innerHTML =
-    '<div class="update-downloading">' +
-      '<p data-i18n="update.downloading">' + esc(t("update.downloading", "Downloading…")) + '</p>' +
-      '<div class="progress-block">' +
-        '<div class="progress-head"><span>Progress</span><span class="pct" id="dlPct">0%</span></div>' +
-        '<div class="progress-track"><div class="progress-fill" id="dlBar" style="width:0%"></div></div>' +
-      '</div>' +
-      '<div class="update-actions">' +
-        '<button class="btn btn-danger" id="btnCancelDownload" data-i18n="update.cancel">' + esc(t("update.cancel", "Cancel")) + '</button>' +
-      '</div>' +
-    '</div>';
-  const res = await api().startUpdateDownload();
+async function updateCheck(force) {
+  state.update.status = UPDATE.CHECKING;
+  if (state.update.popoverOpen) renderUpdatePopover();
+  try {
+    const res = await api().checkForUpdates(!!force);
+    state.update.checked = true;
+    if (res && res.available) {
+      state.update.status = UPDATE.AVAILABLE;
+      state.update.version = res.version || "";
+      state.update.notes = res.notes || "";
+    } else if (res && res.offline) {
+      state.update.status = UPDATE.ERROR;
+      state.update.error = t("update.offline", "Update check unavailable (offline).");
+    } else {
+      state.update.status = UPDATE.UPTODATE;
+    }
+  } catch (e) {
+    state.update.status = UPDATE.ERROR;
+    state.update.error = t("update.error", "Update check failed.");
+  }
+  refreshUpdateChrome();
+  if (state.update.popoverOpen) renderUpdatePopover();
+}
+
+async function updateDownload() {
+  state.update.status = UPDATE.DOWNLOADING;
+  state.update.percent = 0;
+  refreshUpdateChrome();
+  if (state.update.popoverOpen) renderUpdatePopover();
+  let res = null;
+  try {
+    res = await api().startUpdateDownload();
+  } catch (e) {
+    res = { error: "download" };
+  }
   if (res && res.error) {
-    box.innerHTML = '<div class="update-error">' + esc(res.error) + '</div>';
+    state.update.status = UPDATE.ERROR;
+    state.update.error = mapUpdateError(res.error);
+    refreshUpdateChrome();
+    if (state.update.popoverOpen) renderUpdatePopover();
+    else toast("<div>" + esc(state.update.error) + "</div>", "error");
     return;
   }
-  const cancelBtn = $("btnCancelDownload");
-  if (cancelBtn) cancelBtn.addEventListener("click", cancelUpdateDownload);
   pollUpdateProgress();
 }
 
-async function cancelUpdateDownload() {
-  await api().cancelUpdateDownload();
-  const box = $("updateStatus");
-  box.innerHTML = '<div class="update-error">' + esc(t("update.cancel", "Download cancelled.")) + '</div>';
+async function updateCancel() {
+  try {
+    await api().cancelUpdateDownload();
+  } catch (e) {
+    toast("<div>" + esc(t("update.downloadFailed",
+      "The update could not be downloaded.")) + "</div>", "error");
+  }
+  // The polling loop observes the cancellation and renders the final state.
 }
 
-async function pollUpdateProgress() {
-  const box = $("updateStatus");
-  const pct = $("dlPct");
-  const bar = $("dlBar");
-  if (!box) return;
+/* One-shot state check used when the popover opens, so an already running
+   or completed download is picked up without waiting for the next poll. */
+async function refreshUpdateProgress() {
   const res = await api().updateDownloadProgress();
-  if (pct && bar) {
-    pct.textContent = (res.percent || 0) + "%";
-    bar.style.width = (res.percent || 0) + "%";
+  if (!res || res.error_key) return;
+  if (res.path_ready) {
+    if (state.update.status !== UPDATE.READY) {
+      state.update.status = UPDATE.READY;
+      state.update.percent = 100;
+      refreshUpdateChrome();
+      if (state.update.popoverOpen) renderUpdatePopover();
+    }
+    return;
   }
   if (res.running) {
-    setTimeout(pollUpdateProgress, 1000);
+    if (state.update.status !== UPDATE.DOWNLOADING) {
+      state.update.status = UPDATE.DOWNLOADING;
+      state.update.percent = res.percent || 0;
+      refreshUpdateChrome();
+      if (state.update.popoverOpen) renderUpdatePopover();
+    }
+    pollUpdateProgress();
+    return;
+  }
+  if (res.error && state.update.status !== UPDATE.ERROR) {
+    state.update.status = UPDATE.ERROR;
+    state.update.error = mapUpdateError(res.error);
+    refreshUpdateChrome();
+    if (state.update.popoverOpen) renderUpdatePopover();
+  }
+}
+
+let updatePollTimer = null;
+async function pollUpdateProgress() {
+  if (updatePollTimer) clearTimeout(updatePollTimer);
+  const res = await api().updateDownloadProgress();
+  if (!res || res.error_key) {
+    state.update.status = UPDATE.ERROR;
+    state.update.error = t("update.downloadFailed", "The update could not be downloaded.");
+    refreshUpdateChrome();
+    if (state.update.popoverOpen) renderUpdatePopover();
+    return;
+  }
+  if (res.running) {
+    state.update.status = UPDATE.DOWNLOADING;
+    state.update.percent = res.percent || 0;
+    refreshUpdateChrome();
+    if (state.update.popoverOpen) renderUpdatePopover();
+    updatePollTimer = setTimeout(pollUpdateProgress, 800);
     return;
   }
   if (res.path_ready) {
-    box.innerHTML =
-      '<div class="update-ready">' +
-        '<p data-i18n="update.verified">' + esc(t("update.verified", "Installer verified.")) + '</p>' +
-        '<div class="update-actions">' +
-          '<button class="btn btn-primary" id="btnInstallUpdate" data-i18n="update.install">' + esc(t("update.install", "Install Update")) + '</button>' +
-          '<button class="btn" id="btnDismissInstall" data-i18n="update.dismiss">' + esc(t("update.dismiss", "Dismiss")) + '</button>' +
-        '</div>' +
-      '</div>';
-    $("btnInstallUpdate").addEventListener("click", installUpdate);
-    $("btnDismissInstall").addEventListener("click", () => { box.innerHTML = ""; state.updateNotified = false; });
+    const wasReady = state.update.status === UPDATE.READY;
+    state.update.status = UPDATE.READY;
+    state.update.percent = 100;
+    refreshUpdateChrome();
+    if (state.update.popoverOpen) renderUpdatePopover();
+    else if (!wasReady) toast("<div>" + esc(t("update.updateReady",
+      "The update is downloaded and verified.")) + "</div>", "success");
     return;
   }
   if (res.error) {
-    if (res.error === "cancelled") {
-      box.innerHTML = '<div class="update-error">' + esc(t("update.cancel", "Download cancelled.")) + '</div>';
-    } else {
-      box.innerHTML = '<div class="update-error">' + esc(res.error) + '</div>';
-    }
+    state.update.status = UPDATE.ERROR;
+    state.update.error = mapUpdateError(res.error);
+    refreshUpdateChrome();
+    if (state.update.popoverOpen) renderUpdatePopover();
+    else toast("<div>" + esc(state.update.error) + "</div>", "error");
   }
 }
 
-async function installUpdate() {
-  const res = await api().installUpdate();
-  // If successful, the app will exit and launch the installer
+async function updateInstall() {
+  if (state.update.popoverOpen) {
+    const actions = $("updatePopover").querySelector(".upd-actions");
+    if (actions) actions.innerHTML = '<span class="upd-spinner"></span><span>' +
+      esc(t("update.installing", "Installing…")) + "</span>";
+  }
+  let res = null;
+  try {
+    res = await api().installUpdate();
+  } catch (e) {
+    res = { error: "install" };
+  }
+  // On success the application exits and the installer takes over.
+  if (res && (res.error || res.error_key)) {
+    state.update.status = UPDATE.ERROR;
+    state.update.error = res.error_key
+      ? t(res.error_key, res.error_key)
+      : mapUpdateError(res.error);
+    refreshUpdateChrome();
+    if (state.update.popoverOpen) renderUpdatePopover();
+    else toast("<div>" + esc(state.update.error) + "</div>", "error");
+  }
 }
 
 async function loadSettingsForms() {
@@ -1239,25 +1589,6 @@ function bindSettingsForms() {
     infoModal(t("settings.saved", "Saved"), t("settings.saved", "Saved"));
   });
 
-  $("btnCheckUpdates").addEventListener("click", async () => {
-    const btn = $("btnCheckUpdates");
-    const statusBox = $("updateStatus");
-    btn.disabled = true;
-    btn.textContent = t("update.checking", "Checking…");
-    statusBox.innerHTML = "";
-    try {
-      const res = await api().checkForUpdates(true);
-      renderUpdateStatus(res);
-    } catch (e) {
-      statusBox.innerHTML = '<div class="update-error">' + esc(t("update.error", "Update check failed.")) + "</div>";
-    }
-    btn.disabled = false;
-    btn.textContent = t("update.checkNow", "Check for Updates");
-  });
-
-  // Auto-check on settings open if not checked recently
-  checkForUpdatesAuto();
-
   $("accountSettingsForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const err = $("setError");
@@ -1270,10 +1601,10 @@ function bindSettingsForms() {
     const id = $("settingsAccount").value;
     const res = await api().updateAccount(id, $("setDisplayName").value.trim(),
       $("setUser").value.trim(), $("setHost").value.trim(), port);
-    if (res && res.error_key) { errorModal(res); return; }
+    if (res && (res.error_key || res.error)) { reportError(res); return; }
     state.accounts = await api().getAccounts();
     renderAccounts();
-    infoModal(t("settings.saved", "Saved"), t("settings.saved", "Saved"));
+    toast(esc(t("settings.saved", "Settings saved.")), "success");
   });
 
   $("btnCancelAccountSettings").addEventListener("click", () => goArchive());
@@ -1545,6 +1876,7 @@ function bindOnce() {
   $("btnExport").addEventListener("click", onExportExcel);
   $("btnTheme").addEventListener("click", toggleTheme);
   $("btnLang").addEventListener("click", toggleLanguage);
+  $("btnUpdate").addEventListener("click", (e) => { e.stopPropagation(); toggleUpdatePopover(); });
   $("btnExit").addEventListener("click", requestExit);
   $("btnLangFa").addEventListener("click", () => chooseLanguage("fa"));
   $("btnLangEn").addEventListener("click", () => chooseLanguage("en"));
@@ -1554,6 +1886,13 @@ function bindOnce() {
   });
   $("lockForm").addEventListener("submit", submitUnlock);
   $("lockExit").addEventListener("click", () => api().exitApp());
+  // Close the update popover when clicking elsewhere or pressing Escape.
+  document.addEventListener("click", (e) => {
+    if (state.update.popoverOpen && !e.target.closest(".update-wrap")) closeUpdatePopover();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && state.update.popoverOpen) closeUpdatePopover();
+  });
   bindEyeToggles();
   bindAccountForm();
   bindSettingsForms();
@@ -1580,6 +1919,7 @@ async function bootstrap() {
   state.activeAccountId = initial.active_account_id;
   state.lockEnabled = !!initial.lock_enabled;
   state.languageChosen = !!initial.language;
+  window.__maildaanVersion = initial.version || "";
   applyTheme(state.theme);
   await loadLocale(state.lang);
   state.folderDisplay = (state.locale.folders && state.locale.folders.map) || {};
@@ -1587,6 +1927,7 @@ async function bootstrap() {
   updateLangButton();
   updateThemeButton();
   renderAccounts();
+  refreshUpdateChrome();
 
   if (initial.locked) {
     showLock();
@@ -1598,6 +1939,9 @@ async function bootstrap() {
 function finishBoot() {
   /* Route into the application. Called from bootstrap after authentication
      (or directly when no application password is enabled). */
+  // Quietly look for a newer release in the background; a hit only lights
+  // the small badge on the sidebar update icon.
+  setTimeout(checkForUpdatesAuto, 2000);
   if (!state.languageChosen) {
     show("language");
     return;
@@ -1640,6 +1984,14 @@ window.maildaan = {
         renderAccounts();
         if (state.view === "sync") renderSyncScreen();
       });
+      // A failed synchronization is reported on the sync screen; users who
+      // navigated elsewhere still get a clear, dismissible toast.
+      if (report && report.status === "error" && state.view !== "sync") {
+        const msg = report.error_key
+          ? t(report.error_key, report.error_key)
+          : (report.last_error || t("sync.failed", "Synchronization failed."));
+        toast("<div>" + esc(msg) + "</div>", "error");
+      }
     } catch (e) { /* ignore */ }
   },
 };
