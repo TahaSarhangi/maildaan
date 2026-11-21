@@ -757,8 +757,16 @@ class ArchiveDB:
                    JOIN messages m ON m.id = r.message_id
                    WHERE r.message_id IN ({ids})"""
 
-    def report_contacts(self, message_ids):
-        """Correspondents derived only from the selected messages.
+    def report_contacts(self, message_ids, own_addresses=(), sent_ids=()):
+        """External correspondents derived only from the selected messages.
+
+        The account's own address and registered aliases are excluded, so
+        rankings and the unique-correspondent metric cover actual
+        counterparties only. Per-contact incoming/outgoing uses the same
+        definitions as the report summary: incoming counts messages
+        received from the correspondent (their sender-side messages),
+        outgoing counts messages the account actually sent to them
+        (`sent_ids`; drafts never qualify).
 
         Every returned row has activity by construction; zero-activity rows
         exist only in the explicitly requested complete directory
@@ -766,22 +774,40 @@ class ArchiveDB:
         """
         if not message_ids:
             return []
+        ids = ",".join("?" * len(message_ids))
+        own = [str(a).strip().lower() for a in (own_addresses or []) if a]
+        sent = [i for i in (sent_ids or []) if i is not None]
+        own_clause = (f"AND lower(u.addr) NOT IN ({','.join('?' * len(own))})"
+                      if own else "")
+        # Without sent messages the recipient side contributes nothing: an
+        # empty IN () list is not valid SQL, so the side is disabled outright.
+        sent_clause = (f"AND r.message_id IN ({','.join('?' * len(sent))})"
+                       if sent else "AND 0")
         sql = f"""SELECT lower(u.addr) AS email,
                          GROUP_CONCAT(DISTINCT u.nm) AS names,
                          substr(lower(u.addr), instr(lower(u.addr), '@') + 1) AS domain,
                          COUNT(DISTINCT u.mid) AS messages,
-                         SUM(CASE WHEN u.dir='out' THEN 1 ELSE 0 END) AS outgoing,
-                         SUM(CASE WHEN u.dir='in' THEN 1 ELSE 0 END) AS incoming,
+                         SUM(CASE WHEN u.side='from' THEN 1 ELSE 0 END) AS incoming,
+                         SUM(CASE WHEN u.side='to' THEN 1 ELSE 0 END) AS outgoing,
                          MIN(u.ts) AS first_seen, MAX(u.ts) AS last_seen
-                  FROM ({self._scope_participants_sql(message_ids)}) AS u
-                  WHERE u.addr IS NOT NULL AND u.addr <> '' AND instr(u.addr, '@') > 0
+                  FROM (
+                    SELECT m.id AS mid, m.sender_email AS addr, m.sender_name AS nm,
+                           m.date_utc AS ts, 'from' AS side
+                    FROM messages m WHERE m.id IN ({ids})
+                    UNION ALL
+                    SELECT r.message_id, r.email, r.name, m.date_utc, 'to' AS side
+                    FROM recipients r
+                    JOIN messages m ON m.id = r.message_id
+                    WHERE r.message_id IN ({ids}) {sent_clause}
+                  ) AS u
+                  WHERE u.addr IS NOT NULL AND u.addr <> ''
+                        AND instr(u.addr, '@') > 0 {own_clause}
                   GROUP BY lower(u.addr)
                   ORDER BY messages DESC, email ASC"""
-        # The participant union carries the message ids twice (sender side
-        # and recipient side), so the parameters must be supplied twice.
+        params = (list(message_ids) + list(message_ids) + list(sent) + own)
         with self._lock:
             return [dict(r) for r in
-                    self.conn.execute(sql, list(message_ids) * 2).fetchall()]
+                    self.conn.execute(sql, params).fetchall()]
 
     def report_domains(self, message_ids):
         """Email domains derived only from the selected messages."""

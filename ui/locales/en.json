@@ -420,7 +420,7 @@
     "customDomains": "Custom domains",
     "publicProviders": "Public email providers",
     "attachments": "Attachments",
-    "attachmentVolume": "Attachment volume (KB)",
+    "attachmentVolume": "Attachment volume",
     "firstMessage": "First message",
     "latestMessage": "Latest message",
     "month": "Month",
@@ -459,7 +459,7 @@
     "lastSeen": "Last message",
     "fileName": "File name",
     "fileType": "Type",
-    "sizeCol": "Size (KB)",
+    "sizeCol": "Size",
     "noName": "(no display name)",
     "noData": "No data matched the selected reporting scope.",
     "infoLanguage": "Report language",
@@ -476,6 +476,8 @@
     "noteDirectory": "The contacts worksheet also lists contacts with no message inside the selected scope, as requested for the complete directory.",
     "noteBody": "Message bodies are included only in the messages worksheet and are truncated to fit the Excel cell limit.",
     "duplicateNote": "Each message appears once, even when it is stored in more than one folder.",
+    "undated": "Undated",
+    "noteUndated": "Messages with no stored date are listed under “Undated” so the monthly totals match the overall report total.",
     "bodyTruncated": "(truncated)"
   }
 }

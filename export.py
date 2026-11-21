@@ -304,7 +304,9 @@ def _value_cell(ws, row, col, value, style, *, num=False, date=False,
 def _finish_table(ws, row, ncols, style, widths, first_row=1):
     """Freeze the header, enable autofilter and set print layout."""
     _set_widths(ws, widths)
-    ws.freeze_panes = f"A{row + 1}"
+    # Only the header row stays frozen; freezing the data rows would lock
+    # the whole table in place (e.g. hundreds of rows) and break scrolling.
+    ws.freeze_panes = f"A{first_row + 1}"
     if row >= first_row:
         ws.auto_filter.ref = (f"{get_column_letter(1)}{first_row}:"
                               f"{get_column_letter(ncols)}{max(row, first_row)}")
@@ -483,21 +485,71 @@ def scope_description(scope_cfg, locale, account) -> str:
 # ------------------------------------------------------------------- analytics
 
 def monthly_activity(messages) -> list:
-    """(month key, total, incoming, outgoing) sorted chronologically."""
-    counts = {}
+    """(month key, total, incoming, outgoing) rows in chronological order.
+
+    The incoming/outgoing buckets use the same definitions as the summary
+    (drafts belong to neither). Messages without a stored date are not
+    dropped: they form their own final row with key None so the monthly
+    totals always reconcile with the overall report total.
+    """
+    counts, undated = {}, None
+
+    def bump(entry):
+        total, inc, out = entry
+        total += 1
+        if way == "incoming":
+            inc += 1
+        elif way == "outgoing":
+            out += 1
+        return (total, inc, out)
+
     for m in messages:
+        way = m.get("direction")
         parsed = parse_date(m.get("date_utc"))
         if parsed is None:
+            undated = bump(undated or (0, 0, 0))
             continue
         key = parsed.strftime("%Y-%m")
-        total, inc, out = counts.get(key, (0, 0, 0))
-        total += 1
-        if m.get("direction") == "outgoing":
-            out += 1
-        else:
-            inc += 1
-        counts[key] = (total, inc, out)
-    return [(key, *counts[key]) for key in sorted(counts)]
+        counts[key] = bump(counts.get(key, (0, 0, 0)))
+    rows = [(key, *counts[key]) for key in sorted(counts)]
+    if undated:
+        rows.append((None, *undated))
+    return rows
+
+
+# Persian (Jalali) month names, in calendar order.
+_JALALI_MONTHS = ("فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور",
+                  "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند")
+
+
+def month_label(key, style) -> str:
+    """Display label for one monthly_activity key.
+
+    Persian reports use Jalali year/month labels; the underlying rows stay
+    sorted by the Gregorian key, so chronological order is preserved.
+    """
+    if key is None:
+        return style.tr("undated", "Undated")
+    if not style.fa:
+        return key
+    jy, jm, _ = gregorian_to_jalali(int(key[:4]), int(key[5:7]), 1)
+    if 1 <= jm <= len(_JALALI_MONTHS):
+        return f"{_JALALI_MONTHS[jm - 1]} {fa_digits(f'{jy:04d}')}"
+    return fa_digits(f"{jy:04d}/{jm:02d}")
+
+
+def human_size(total_bytes):
+    """(value, unit, number_format) for a byte count, scaled to KB/MB/GB.
+
+    The cell stays a real Excel number; the unit travels in the number
+    format, so the size column remains sortable and summable.
+    """
+    size = float(total_bytes or 0) / 1024
+    for unit in ("KB", "MB", "GB"):
+        if size < 1024 or unit == "GB":
+            return round(size, 1), unit, f'#,##0.0" {unit}"'
+        size /= 1024
+    return 0.0, "KB", '#,##0.0" KB"'
 
 
 def choose_display_name(names, email) -> str:
@@ -510,11 +562,20 @@ def choose_display_name(names, email) -> str:
     return sorted(candidates, key=lambda c: (-len(c), c))[0]
 
 
-def contact_rows(db, message_ids, include_directory):
-    """Contacts of the selected messages, optionally merged with the full
-    account directory (rows without activity are clearly marked)."""
+def contact_rows(db, message_ids, own, sent_ids, include_directory):
+    """External correspondents of the selected messages.
+
+    The account's own address and registered aliases are excluded from the
+    rankings and from the unique-correspondent metric; other people on the
+    same domain stay included. `sent_ids` are the messages actually sent by
+    the account, so per-contact incoming/outgoing uses the same definitions
+    as the summary. Optionally merged with the full account directory (rows
+    without activity are clearly marked).
+    """
+    own = own or set()
     rows = []
-    active = {c["email"]: c for c in db.report_contacts(message_ids)}
+    active = {c["email"]: c for c in
+              db.report_contacts(message_ids, own, sent_ids)}
     for contact in active.values():
         contact["display_name"] = choose_display_name(
             contact.get("names"), contact.get("email"))
@@ -523,7 +584,7 @@ def contact_rows(db, message_ids, include_directory):
     if include_directory:
         for contact in db.report_contact_directory():
             email = (contact.get("email_norm") or "").strip().lower()
-            if email in active:
+            if email in active or email in own:
                 continue
             rows.append({
                 "email": email, "display_name": contact.get("display_name") or "",
@@ -568,11 +629,12 @@ def _section(ws, row, text, style, ncols):
     return row + 1
 
 
-def _kv_row(ws, row, label, value, style, value_is_number=False):
+def _kv_row(ws, row, label, value, style, value_is_number=False,
+            num_fmt="#,##0"):
     _value_cell(ws, row, 1, label, style, bold=True)
     cell = _value_cell(ws, row, 2, value, style)
     if value_is_number and isinstance(value, (int, float)):
-        cell.number_format = "#,##0"
+        cell.number_format = num_fmt
         cell.alignment = Alignment(horizontal=style.text_align)
         cell.font = style.value_font
     else:
@@ -597,6 +659,7 @@ def _write_summary(wb, style, ctx, with_charts):
 
     # ------------------------------------------------------- key metrics
     row = _section(ws, row, t.get("metricsTitle", "Key metrics"), style, ncols)
+    att_size, _att_unit, att_fmt = human_size(stats["attachment_bytes"])
     metrics = [
         (t.get("totalMessages", "Total matching messages"), stats["total"], True),
         (t.get("incoming", "Incoming"), stats["incoming"], True),
@@ -607,13 +670,14 @@ def _write_summary(wb, style, ctx, with_charts):
         (t.get("customDomains", "Custom domains"), stats["custom_domains"], True),
         (t.get("publicProviders", "Public email providers"), stats["public_providers"], True),
         (t.get("attachments", "Attachments"), stats["attachments"], True),
-        (t.get("attachmentVolume", "Attachment volume (KB)"),
-         round(stats["attachment_bytes"] / 1024, 1), True),
+        (t.get("attachmentVolume", "Attachment volume"),
+         att_size, True, att_fmt),
         (t.get("firstMessage", "First message"), stats["first"], False),
         (t.get("latestMessage", "Latest message"), stats["latest"], False),
     ]
-    for label, value, is_number in metrics:
-        row = _kv_row(ws, row, label, value, style, value_is_number=is_number)
+    for label, value, is_number, *fmt in metrics:
+        row = _kv_row(ws, row, label, value, style, value_is_number=is_number,
+                      num_fmt=(fmt[0] if fmt else "#,##0"))
 
     # -------------------------------------------------- activity by month
     row += 1
@@ -628,7 +692,7 @@ def _write_summary(wb, style, ctx, with_charts):
     months = ctx["months"]
     first_data_row = row
     for month, total, incoming, outgoing in months:
-        _value_cell(ws, row, 1, month, style, ltr=True)
+        _value_cell(ws, row, 1, month, style, ltr=not style.fa)
         _value_cell(ws, row, 2, total, style, num=True, center=True)
         _value_cell(ws, row, 3, incoming, style, num=True, center=True)
         _value_cell(ws, row, 4, outgoing, style, num=True, center=True)
@@ -722,7 +786,7 @@ def _write_messages(wb, style, ctx):
     if columns.get("folders", True):
         add("folders", t.get("folders", "Folders"), 24)
     if columns.get("size", True):
-        add("size", t.get("sizeKB", "Size (KB)"), 12, kb=True)
+        add("size", t.get("sizeCol", "Size"), 12, kb=True)
     if columns.get("attachments", True):
         add("attachment_count", t.get("attachmentCount", "Attachments"), 12,
             num=True, center=True)
@@ -770,10 +834,10 @@ def _write_messages(wb, style, ctx):
                                            vertical="top", wrap_text=True)
                 cell.font = style.base
             elif flags.get("kb"):
-                cell = _value_cell(ws, row, col_idx,
-                                   round((value or 0) / 1024, 1), style,
+                size, _unit, size_fmt = human_size(value or 0)
+                cell = _value_cell(ws, row, col_idx, size, style,
                                    num=True, center=True)
-                cell.number_format = "#,##0.0"
+                cell.number_format = size_fmt
             else:
                 _value_cell(ws, row, col_idx, value, style,
                             ltr=flags.get("ltr"), wrap=flags.get("wrap"),
@@ -782,6 +846,12 @@ def _write_messages(wb, style, ctx):
         row += 1
     _finish_table(ws, row - 1, len(cols), style,
                   [width for _, _, width, _ in cols])
+    if style.fa:
+        # The Gregorian column is only a sorting/filtering companion to the
+        # Persian date; hide it instead of presenting two date columns.
+        for idx, (key, _, _, _) in enumerate(cols, start=1):
+            if key == "date_utc":
+                ws.column_dimensions[get_column_letter(idx)].hidden = True
     return ws
 
 
@@ -839,6 +909,11 @@ def _write_contacts(wb, style, ctx):
                 ws.cell(row=row, column=col_idx).font = style.subtitle
         row += 1
     _finish_table(ws, row - 1, len(headers), style, widths)
+    if style.fa:
+        # The Gregorian first/last-seen columns only back the Jalali text
+        # for sorting and filtering; hide them from the printed view.
+        for col_idx in (8, 10):
+            ws.column_dimensions[get_column_letter(col_idx)].hidden = True
     return ws
 
 
@@ -884,13 +959,13 @@ def _write_attachments(wb, style, ctx):
                    t.get("dateGreg", "Gregorian date"),
                    t.get("subject", "Subject"), t.get("senderName", "Sender"),
                    t.get("fileName", "File name"), t.get("fileType", "Type"),
-                   t.get("sizeCol", "Size (KB)")]
+                   t.get("sizeCol", "Size")]
         widths = [19, 18, 44, 24, 34, 18, 12]
     else:
         headers = [t.get("dateGreg", "Date"), t.get("subject", "Subject"),
                    t.get("senderName", "Sender"),
                    t.get("fileName", "File name"), t.get("fileType", "Type"),
-                   t.get("sizeCol", "Size (KB)")]
+                   t.get("sizeCol", "Size")]
         widths = [18, 44, 24, 34, 18, 12]
     row = 1
     _write_header(ws, row, headers, style)
@@ -915,12 +990,16 @@ def _write_attachments(wb, style, ctx):
         _value_cell(ws, row, col, attachment.get("mime_type") or "", style,
                     ltr=True)
         col += 1
-        cell = _value_cell(ws, row, col, round(
-            (attachment.get("bytes") or 0) / 1024, 1), style, num=True,
-            center=True)
-        cell.number_format = "#,##0.0"
+        att_size, _att_unit, att_fmt = human_size(attachment.get("bytes") or 0)
+        cell = _value_cell(ws, row, col, att_size, style, num=True,
+                           center=True)
+        cell.number_format = att_fmt
         row += 1
     _finish_table(ws, row - 1, len(headers), style, widths)
+    if style.fa:
+        # The Gregorian date only backs the Persian date for sorting; hide
+        # it instead of presenting two date columns.
+        ws.column_dimensions[get_column_letter(2)].hidden = True
     return ws
 
 
@@ -1020,7 +1099,10 @@ def build_report(db, options: dict, lang: str, account, path: str) -> dict:
                                addresses)
     ids = [m["id"] for m in messages]
 
-    contacts = contact_rows(db, ids, bool(content.get("all_contacts"))) \
+    sent_ids = [m["id"] for m in messages
+                if m.get("direction") == "outgoing"]
+    contacts = contact_rows(db, ids, addresses, sent_ids,
+                            bool(content.get("all_contacts"))) \
         if content.get("contacts") or content.get("summary") else []
 
     recipient_lists = {}
@@ -1051,7 +1133,9 @@ def build_report(db, options: dict, lang: str, account, path: str) -> dict:
     for mid, names in attachment_names.items():
         attachment_names[mid] = ", ".join(names)
 
-    months = monthly_activity(messages)
+    month_rows = monthly_activity(messages)
+    months = [(month_label(key, style), total, inc, out)
+              for key, total, inc, out in month_rows]
     dates = [parse_date(m.get("date_utc")) for m in messages]
     dates = [d for d in dates if d is not None]
     provider_label = t.get("providerPublic", "Public email provider")
@@ -1092,10 +1176,17 @@ def build_report(db, options: dict, lang: str, account, path: str) -> dict:
         "first": (min(dates) if dates else None),
         "latest": (max(dates) if dates else None),
     }
-    date_fmt = "%Y-%m-%d %H:%M"
-    if style.fa:
-        stats["first"] = jalali_text(stats["first"].strftime(date_fmt)) if stats["first"] else "—"
-        stats["latest"] = jalali_text(stats["latest"].strftime(date_fmt)) if stats["latest"] else "—"
+    # The first/last metrics are rendered as localized text. jalali_text
+    # parses the full 'YYYY-MM-DD HH:MM:SS' form; minute precision would
+    # fail to parse and leave the Persian metrics empty.
+    date_fmt = "%Y-%m-%d %H:%M:%S" if style.fa else "%Y-%m-%d %H:%M"
+    for key in ("first", "latest"):
+        if stats[key] is None:
+            stats[key] = "—"
+        elif style.fa:
+            stats[key] = jalali_text(stats[key].strftime(date_fmt))
+        else:
+            stats[key] = stats[key].strftime(date_fmt)
 
     def folder_names(message):
         names = []
@@ -1139,6 +1230,8 @@ def build_report(db, options: dict, lang: str, account, path: str) -> dict:
     notes = [t.get("noteProvider", ""),
              t.get("noteDraft", ""),
              t.get("duplicateNote", "")]
+    if any(key is None for key, *_ in month_rows):
+        notes.append(t.get("noteUndated", ""))
     if content.get("all_contacts"):
         notes.append(t.get("noteDirectory", ""))
     if content.get("body"):
