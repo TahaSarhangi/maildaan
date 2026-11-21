@@ -1140,7 +1140,7 @@ def build_report(db, options: dict, lang: str, account, path: str) -> dict:
     dates = [d for d in dates if d is not None]
     provider_label = t.get("providerPublic", "Public email provider")
     custom_label = t.get("providerCustom", "Custom domain")
-    domains = db.report_domains(ids) if ids else []
+    domains = db.report_domains(ids, addresses, sent_ids) if ids else []
     for domain in domains:
         domain["type"] = (provider_label
                           if domain.get("domain") in PUBLIC_PROVIDERS
