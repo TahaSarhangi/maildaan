@@ -8,7 +8,7 @@ search and export your email — **completely offline**.
 **Language:** [English](README.md) · [فارسی (Persian)](README.fa.md)
 
 - **Developer:** Titanium — https://github.com/TahaSarhangi
-- **Version:** 1.2.0
+- **Version:** 1.3.0
 - **License:** MIT (see [LICENSE](LICENSE))
 
 ## Why MailDaan
@@ -54,9 +54,16 @@ Installing the application, and browsing or searching an existing archive, never
 - **Professional desktop interface** — persistent sidebar, three-pane archive explorer
   (folders / message list / message detail), light and dark themes, bundled Vazirmatn font
   for the Persian UI, switchable between Persian (RTL) and English (LTR) at any time.
-- **Optional Excel reports** — export the current view (or the whole archive) to a formatted
-  workbook with **Messages**, **Contacts** and **Organizations** sheets. Reports are never
-  generated automatically — only when you ask for one.
+- **Professional Excel reports** — a dedicated report dialog lets you choose the
+  purpose (comprehensive, activity, contacts, domains or messages), the exact
+  scope (date range, folders, direction, drafts handling and an optional
+  keyword), which worksheets and columns to include, and the report language.
+  Each report is a formatted workbook with an executive summary, an
+  activity-by-month chart, a detailed message list, contact and email-domain
+  statistics, and an attachment listing — every sheet derived from that same
+  filtered scope, with Persian Jalali dates and a right-to-left layout in the
+  Persian report. Reports are never generated automatically — only when you
+  ask for one.
 - **Optional application password** — protect entry into MailDaan with a password stored
   as an **Argon2id hash** (never in plaintext). This is an application-level access lock
   only — it does **not** encrypt the archive, and there is deliberately no password-reset
@@ -74,7 +81,7 @@ Installing the application, and browsing or searching an existing archive, never
 
 ## Completely offline installer
 
-`MailDaan-Setup-1.2.0.exe` is a single, fully self-contained setup program:
+`MailDaan-Setup-1.3.0.exe` is a single, fully self-contained setup program:
 
 - It embeds the official **Microsoft Edge WebView2 Fixed Version Runtime (x64)** and uses
   that private copy, so setup **never installs, downloads or asks for** a system WebView2
@@ -102,10 +109,10 @@ has been blurred so no user data is exposed.
 
 ## Download and install
 
-1. Download **`MailDaan-Setup-1.2.0.exe`** from the
+1. Download **`MailDaan-Setup-1.3.0.exe`** from the
    [Releases](https://github.com/TahaSarhangi/maildaan/releases) page.
 2. Run it — no internet connection is required. Verify the download anytime against the
-   published `MailDaan-Setup-1.2.0.exe.sha256` checksum file.
+   published `MailDaan-Setup-1.3.0.exe.sha256` checksum file.
 3. Launch **MailDaan** from the Start Menu (an optional desktop shortcut is offered).
 
 Your archive is stored separately in `%LOCALAPPDATA%\MailDaan` and survives updates and
@@ -126,8 +133,35 @@ uninstallations.
    original `.eml` file.
 5. **Search** — type a name, subject or any text. Persian/English keyboard-layout mistakes
    and most typos are still found, with *"Did you mean …?"* suggestions.
-6. **Export to Excel** (optional) — generate a workbook from the current search/filter
-   scope, or from the whole archive when no filters are active.
+6. **Create an Excel report** (optional) — open the report dialog, pick the purpose and
+   scope (dates, folders, direction, drafts, keyword) and the sheets you want, and
+   generate a formatted bilingual workbook with summaries, charts and statistics.
+
+## What's new in 1.3.0
+
+- **Professional configurable Excel reports** — purpose presets, exact scope
+  selection (date range, folders, direction, drafts, keyword), per-worksheet and
+  per-column toggles, and a live scope summary with the matching message count.
+- **Management summaries and correspondence analysis** — executive-summary
+  metrics (totals, incoming/outgoing/drafts, unique correspondents and domains,
+  attachment volume, first/last message), activity-by-month charts, and most
+  active contacts and domains.
+- **Contact and email-domain statistics** — per-contact incoming/outgoing counts,
+  activity dates, and separate reporting of custom domains and public email
+  providers.
+- **Corrected incoming/outgoing metrics** — direction is derived from the
+  account's own addresses and aliases, drafts are their own category, and the
+  account itself is excluded from correspondent and domain rankings while
+  colleagues on the same domain remain included.
+- **Jalali dates in Persian reports** — Persian month labels, localized chart
+  legends and right-to-left worksheets; English reports stay Gregorian and
+  left-to-right.
+- **Professional spreadsheet layouts** — frozen header rows with working
+  autofilters, locale-aware fonts, and human-readable attachment sizes.
+- **Improved placeholders and localized progress timers** — every form
+  placeholder and hint now follows the active language, and sync progress,
+  elapsed and remaining time are displayed with locale-aware formatting and
+  Persian digits in the Persian interface.
 
 ## Run from source
 
