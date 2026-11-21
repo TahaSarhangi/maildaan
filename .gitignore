@@ -48,3 +48,5 @@ webview2_runtime/
 # the copied installer and all test outputs are transient)
 sandbox-share/input/MailDaan-Setup-*.exe
 sandbox-share/output/
+
+graphify-out/
