@@ -1625,7 +1625,7 @@ async function onGenerateReport() {
 /* ----------------------------------------------------------------- settings */
 
 /* ------------------------------------------------------------------ updates
-   Compact, ChatGPT-style update control: a small icon above the Exit button
+   Compact update control: a small icon above the Exit button
    in the sidebar bottom section, with a subtle badge when a newer release is
    available and a small contextual popover for checking, downloading,
    verifying and installing. The updater backend (GitHub API, SHA-256

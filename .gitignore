@@ -16,6 +16,7 @@ dist/
 *.db-shm
 *.sqlite
 *.eml
+*.xlsx
 exports/
 attachments/
 eml/
@@ -50,3 +51,9 @@ sandbox-share/input/MailDaan-Setup-*.exe
 sandbox-share/output/
 
 graphify-out/
+
+# Local AI development tooling (OpenCode / Graphify) — personal developer
+# environment, not part of the public project.
+.opencode/
+AGENTS.md
+.graphifyignore
