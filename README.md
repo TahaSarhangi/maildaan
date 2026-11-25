@@ -1,25 +1,25 @@
 # MailDaan
 
-**MailDaan** (میل‌دان) is a free, open-source, **offline email archive and explorer** for
-Windows. It speaks **Persian and English**, connects to any IMAP account, downloads every
+**MailDaan** (میل‌دان) is a free, open-source **offline email archive and explorer** for
+Windows. It **supports Persian and English**, connects to **compatible IMAP accounts**, downloads every
 accessible message and attachment into a fully local archive, and then lets you browse,
 search and export your email — **completely offline**.
 
 **Language:** [English](README.md) · [فارسی (Persian)](README.fa.md)
 
 - **Developer:** Titanium — https://github.com/TahaSarhangi
-- **Version:** 1.3.0
+- **Version:** 1.3.1
 - **License:** MIT (see [LICENSE](LICENSE))
 
 ## Why MailDaan
 
 Your email stays yours. MailDaan copies your messages into a **local archive on your own
 machine** — after that, reading, searching and exporting your email needs **no internet
-connection at all**. There is no cloud, no account on any third-party service, and no
-data leaving your computer.
+connection at all**. There is no cloud, no account on any third-party service.
 
-An internet connection is required **only to download new email** from your IMAP server.
-Installing the application, and browsing or searching an existing archive, never needs one.
+An internet connection is required **only to download new email** from your IMAP server
+and to check for application updates. Installing the application, and browsing or searching
+an existing archive, never needs one.
 
 ## Main features
 
@@ -54,7 +54,7 @@ Installing the application, and browsing or searching an existing archive, never
 - **Professional desktop interface** — persistent sidebar, three-pane archive explorer
   (folders / message list / message detail), light and dark themes, bundled Vazirmatn font
   for the Persian UI, switchable between Persian (RTL) and English (LTR) at any time.
-- **Professional Excel reports** — a dedicated report dialog lets you choose the
+- **Customizable Excel reports** — a dedicated report dialog lets you choose the
   purpose (comprehensive, activity, contacts, domains or messages), the exact
   scope (date range, folders, direction, drafts handling and an optional
   keyword), which worksheets and columns to include, and the report language.
@@ -81,7 +81,7 @@ Installing the application, and browsing or searching an existing archive, never
 
 ## Completely offline installer
 
-`MailDaan-Setup-1.3.0.exe` is a single, fully self-contained setup program:
+`MailDaan-Setup-1.3.1.exe` is a single, fully self-contained setup program:
 
 - It embeds the official **Microsoft Edge WebView2 Fixed Version Runtime (x64)** and uses
   that private copy, so setup **never installs, downloads or asks for** a system WebView2
@@ -109,10 +109,10 @@ has been blurred so no user data is exposed.
 
 ## Download and install
 
-1. Download **`MailDaan-Setup-1.3.0.exe`** from the
+1. Download **`MailDaan-Setup-1.3.1.exe`** from the
    [Releases](https://github.com/TahaSarhangi/maildaan/releases) page.
 2. Run it — no internet connection is required. Verify the download anytime against the
-   published `MailDaan-Setup-1.3.0.exe.sha256` checksum file.
+   published `MailDaan-Setup-1.3.1.exe.sha256` checksum file.
 3. Launch **MailDaan** from the Start Menu (an optional desktop shortcut is offered).
 
 Your archive is stored separately in `%LOCALAPPDATA%\MailDaan` and survives updates and
@@ -125,7 +125,9 @@ uninstallations.
 2. **Add your email account** — IMAP server (for example `imap.gmail.com`), port
    (default `993`, IMAP over TLS), email address and password. The password is used only
    for that synchronization and is never stored.
-   *(For Gmail: enable IMAP in Gmail settings and generate an app password.)*
+   *(For Gmail: if your account uses 2-Step Verification, generate an app password in your
+   Google Account security settings. If IMAP access is not enabled, you may need to turn it
+   on in Gmail settings.)*
 3. **Synchronize** — the first sync downloads every accessible folder. Progress, speed and
    estimated time are shown in the application window. You can cancel at any time;
    completed downloads are kept and the next sync resumes from the checkpoint.
@@ -136,6 +138,24 @@ uninstallations.
 6. **Create an Excel report** (optional) — open the report dialog, pick the purpose and
    scope (dates, folders, direction, drafts, keyword) and the sheets you want, and
    generate a formatted bilingual workbook with summaries, charts and statistics.
+
+## What's new in 1.3.1
+
+- **Fixed the updater's installer launch and application relaunch** — the update manager
+  now uses the Windows shell to start the verified installer with proper UAC elevation
+  (`ShellExecuteW("runas")`). The previous `subprocess.Popen` call could not trigger the
+  elevation prompt, causing the application to close without installing anything. MailDaan
+  now closes cleanly, the installer runs elevated and detached from the shell, and the
+  application restarts automatically after installation completes.
+- **One-time bilingual update-success confirmation** — after the restarted application
+  verifies that its installed version matches the version handed to the installer, it
+  displays a single confirmation dialog ("Update Complete" / "بروزرسانی کامل شد") in the
+  active UI language. The record is cleared immediately so the notice can never appear
+  more than once. A cancelled or failed installation, or a restart into a different
+  version, stays silent — the application never claims success falsely.
+- **Application version in the footer** — the current version number now appears in the
+  window footer ("Version 1.3.1" / "نسخه ۱.۳.۱"), using Latin digits in the English UI
+  and Persian digits in the Persian UI.
 
 ## What's new in 1.3.0
 
