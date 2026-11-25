@@ -43,6 +43,7 @@ const state = {
     popoverOpen: false,
     installPrompted: false, // one "install now / later" prompt per completed download
   },
+  pendingUpdateVersion: null, // version recorded when the installer was started
 };
 
 /* ------------------------------------------------------------------ helpers */
@@ -206,6 +207,19 @@ function applyTranslations() {
   document.documentElement.lang = state.lang;
   document.body.dir = state.lang === "fa" ? "rtl" : "ltr";
   document.title = t("appName", "MailDaan");
+  renderFooterVersion();
+}
+
+/* The footer shows the running application version next to the copyright:
+   Latin digits in English, Persian digits in Persian. It stays empty until
+   the backend reports the version during bootstrap. */
+function renderFooterVersion() {
+  const el = $("footerVersion");
+  if (!el) return;
+  const version = appVersionDisplay();
+  el.textContent = version
+    ? t("version", "Version") + " " + toDigits(version)
+    : "";
 }
 
 function updateThemeButton() {
@@ -1733,6 +1747,7 @@ function placeUpdatePopover() {
 function mapUpdateError(err) {
   const text = String(err || "");
   if (text === "cancelled") return t("update.cancelled", "The download was cancelled.");
+  if (text === "install") return t("update.installFailed", "The update could not be installed.");
   if (text.indexOf("checksum verification failed") !== -1)
     return t("update.checksumFail", "Checksum verification failed.");
   if (text.indexOf("checksum unavailable") !== -1)
@@ -1743,7 +1758,7 @@ function mapUpdateError(err) {
 }
 
 function appVersionDisplay() {
-  return (window.__maildaanVersion || "") || "1.2.0";
+  return window.__maildaanVersion || "";
 }
 
 function renderUpdatePopover() {
@@ -2477,6 +2492,7 @@ async function bootstrap() {
   state.lockEnabled = !!initial.lock_enabled;
   state.languageChosen = !!initial.language;
   window.__maildaanVersion = initial.version || "";
+  state.pendingUpdateVersion = initial.pending_update_version || null;
   applyTheme(state.theme);
   await loadLocale(state.lang);
   state.folderDisplay = (state.locale.folders && state.locale.folders.map) || {};
@@ -2493,9 +2509,33 @@ async function bootstrap() {
   finishBoot();
 }
 
+/* Verify the outcome of an applied update before reporting anything. The
+   previous session recorded the version it handed to the installer — a
+   persistent record, so it survives the restart — and success is announced
+   only when this build's version matches it exactly. A cancelled or failed
+   install, or a relaunch into a different version, stays silent: this must
+   never claim success falsely. The record is cleared either way, so the
+   notice can never be shown more than once. */
+function checkPendingUpdate(pendingVersion) {
+  if (!pendingVersion) return;
+  state.pendingUpdateVersion = null;
+  const expected = String(pendingVersion).replace(/^v/i, "");
+  const installed = appVersionDisplay();
+  try { api().clearPendingUpdate(); } catch (e) { /* cleared server-side anyway */ }
+  if (installed && installed === expected) {
+    infoModal(
+      t("update.successTitle", "Update Complete"),
+      t("update.successBody", "MailDaan was successfully updated to version {version}.")
+        .replace("{version}", toDigits(expected)));
+  }
+}
+
 function finishBoot() {
   /* Route into the application. Called from bootstrap after authentication
      (or directly when no application password is enabled). */
+  // Report the result of an update the previous session handed to the
+  // installer — but only after verifying this build really is that version.
+  checkPendingUpdate(state.pendingUpdateVersion);
   // Quietly look for a newer release in the background; a hit only lights
   // the small badge on the sidebar update icon.
   setTimeout(checkForUpdatesAuto, 2000);

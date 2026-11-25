@@ -121,6 +121,7 @@ class AppApi:
             "accounts": registry,
             "active_account_id": active["id"] if active else None,
             "version": config.APP_VERSION,
+            "pending_update_version": self.settings.get("pending_update_version"),
             "lock_enabled": self.lock.enabled,
             "locked": self._locked(),
         }
@@ -766,8 +767,22 @@ class AppApi:
     def updateDownloadProgress(self):
         return self.updater.progress_state()
 
+    @user_facing
     def installUpdate(self):
         return self.updater.install()
+
+    def clearPendingUpdate(self):
+        """Drop the pending-update record so the post-update notice is shown
+        at most once. The restarted application calls this after it has
+        presented (or deliberately not presented) the verification result."""
+        try:
+            settings = config.load_settings()
+            if "pending_update_version" in settings:
+                del settings["pending_update_version"]
+                config.save_settings(settings)
+        except Exception:
+            logger.info("could not clear the pending update record")
+        return {"ok": True}
 
 
 def log_startup_exception(exc):

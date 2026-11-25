@@ -1,6 +1,7 @@
 {
   "appName": "MailDaan",
   "copyright": "© 2026 MailDaan",
+  "version": "Version",
   "developedBy": "Developed by",
   "developer": "Titanium",
 
@@ -356,6 +357,9 @@
     "installing": "Installing…",
     "installHint": "MailDaan will close and the verified installer will open.",
     "installFailed": "The update could not be installed.",
+    "launchFailed": "The installer could not be started. The verified update is still ready — try installing it again.",
+    "successTitle": "Update Complete",
+    "successBody": "MailDaan was successfully updated to version {version}.",
     "downloadFailed": "The update could not be downloaded.",
     "retry": "Check Again",
     "checkNow": "Check for Updates",

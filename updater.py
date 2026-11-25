@@ -1,9 +1,9 @@
 """Lightweight GitHub release updater for MailDaan."""
+import ctypes
 import hashlib
 import json
 import logging
 import os
-import subprocess
 import tempfile
 import threading
 import urllib.request
@@ -20,6 +20,34 @@ def _version(value):
         return tuple(int(x) for x in str(value).lstrip("vV").split(".")[:3])
     except (TypeError, ValueError):
         return (0, 0, 0)
+
+
+def _launch_installer(path):
+    """Start the verified installer elevated and detached from this process.
+
+    The MailDaan installer (Inno Setup) runs with an asInvoker manifest and
+    requests elevation itself, so it must be started the same way Explorer
+    starts a double-clicked program: through the shell, not CreateProcess.
+    ShellExecuteW("runas") raises the UAC prompt the installer needs and the
+    new process is owned by the shell, so it survives MailDaan's exit and is
+    never killed when the application closes. A bare subprocess.Popen call
+    cannot trigger that prompt, leaving the app closed and nothing installed.
+
+    Raises OSError when the user declines the prompt or the file cannot be
+    started, so the caller keeps the application open and reports the failure.
+    """
+    sw_shownormal = 1
+    error_cancelled = 1223  # the user declined the elevation prompt
+    shell32 = ctypes.windll.shell32
+    # HINSTANCE is pointer-sized: without an explicit return type a 64-bit
+    # build would truncate the handle and misread it as an error code.
+    shell32.ShellExecuteW.restype = ctypes.c_void_p
+    full = os.path.abspath(path)
+    handle = shell32.ShellExecuteW(None, "runas", full, None,
+                                   os.path.dirname(full), sw_shownormal)
+    code = int(handle or 0)
+    if code <= 32 or code == error_cancelled:
+        raise OSError("ShellExecuteW returned %d" % code)
 
 
 class UpdateManager:
@@ -157,6 +185,26 @@ class UpdateManager:
             # the user can install once the synchronization has finished or
             # been cancelled.
             return {"error_key": "update.syncRunning"}
-        subprocess.Popen([self.download_path], close_fds=True)
+        try:
+            _launch_installer(self.download_path)
+        except OSError as exc:
+            # The elevation request was declined or the installer could not
+            # be started: keep MailDaan open and say so instead of closing
+            # silently with nothing installed.
+            LOG.error("could not start the verified update installer: %s", exc)
+            return {"error_key": "update.launchFailed"}
+        # Remember the version handed over to the installer. The next MailDaan
+        # start compares its own APP_VERSION against this value and reports
+        # success only on an exact match; a cancelled or failed install, or
+        # any other version, leaves no stale record and no false message.
+        self._save_pending_update((self.release or {}).get("tag_name", ""))
         self.api.exitApp()
         return {"ok": True}
+
+    def _save_pending_update(self, version):
+        try:
+            settings = config.load_settings()
+            settings["pending_update_version"] = version
+            config.save_settings(settings)
+        except Exception:
+            LOG.info("could not record the pending update version")
