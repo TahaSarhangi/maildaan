@@ -33,6 +33,11 @@ const state = {
   languageChosen: false,
   searchSeq: 0,
   openMessageId: null,
+  // Multi-selection in the message list. `ids` are the selected message ids
+  // of the current filter scope; `mode` shows the checkboxes. Selection is
+  // reset whenever the account, folder, search or filters change so it can
+  // never silently follow the user into another scope.
+  selection: { mode: false, ids: new Set(), lastAnchor: null, scope: "" },
   update: {
     status: "idle",        // idle | checking | uptodate | available | downloading | ready | error
     version: "",
@@ -427,6 +432,7 @@ async function doSwitch(id) {
   state.filters.folder_id = null;
   state.page = 1;
   state.selectedMessage = null;
+  resetSelection();
   renderAccounts();
   if (state.view === "archive") goArchive();
   if (state.view === "sync") renderSyncScreen();
@@ -518,6 +524,7 @@ async function loadFolders() {
       const id = item.getAttribute("data-id");
       state.filters.folder_id = id ? Number(id) : null;
       state.page = 1;
+      resetSelection();
       loadFolders();
       loadMessages();
     });
@@ -629,10 +636,12 @@ async function loadMessages() {
         ? "noResults" : "emptyFolder";
     list.innerHTML = emptyStateHtml(kind);
     bindEmptyActions();
+    renderSelectionBar();
     renderPagination();
     return;
   }
   const query = filters.search || "";
+  const selecting = state.selection.mode || state.selection.ids.size > 0;
   let html = "";
   for (const m of result.rows) {
     const sender = m.sender_name || m.sender_email || "—";
@@ -640,8 +649,16 @@ async function loadMessages() {
     const att = m.att_count
       ? '<span class="att-badge">' + icon("paperclip") + toDigits(m.att_count) + "</span>"
       : "";
+    const checked = state.selection.ids.has(m.id);
     html +=
-      '<div class="message-row" data-id="' + m.id + '">' +
+      '<div class="message-row' + (selecting ? " selecting" : "") +
+      (checked ? " selected" : "") +
+      '" data-id="' + m.id + '">' +
+      (selecting
+        ? '<button class="msg-check' + (checked ? " on" : "") + '" data-check="' + m.id +
+          '" aria-label="' + esc(t("list.select", "Select")) + '">' +
+          (checked ? icon("check") : "") + "</button>"
+        : "") +
       '<div class="msg-sender">' + highlight(sender, query) + "</div>" +
       '<div class="msg-date">' + formatDate(m.date_utc) + "</div>" +
       '<div class="msg-subject">' + highlight(subject, query) + "</div>" +
@@ -651,9 +668,144 @@ async function loadMessages() {
   }
   list.innerHTML = html;
   list.querySelectorAll(".message-row").forEach((row) => {
-    row.addEventListener("click", () => openMessage(Number(row.getAttribute("data-id"))));
+    row.addEventListener("click", (e) => onMessageRowClick(e, row));
   });
+  renderSelectionBar();
   renderPagination();
+}
+
+/* Row click: ordinary click opens the message as before. While selection
+   mode is on — or when Ctrl/Shift are used — the click selects instead.
+   Shift-click extends the selection from the last anchor row. */
+function onMessageRowClick(e, row) {
+  const id = Number(row.getAttribute("data-id"));
+  if (e.shiftKey && (state.selection.mode || state.selection.ids.size)) {
+    e.preventDefault();
+    const list = $("messageList");
+    const rows = Array.from(list.querySelectorAll(".message-row"));
+    const anchorRow = rows.find((r) => Number(r.getAttribute("data-id")) === state.selection.lastAnchor)
+      || row;
+    const from = rows.indexOf(anchorRow);
+    const to = rows.indexOf(row);
+    if (from < 0 || to < 0) return;
+    for (let i = Math.min(from, to); i <= Math.max(from, to); i++) {
+      state.selection.ids.add(Number(rows[i].getAttribute("data-id")));
+    }
+    state.selection.mode = true;
+    loadMessages();
+    return;
+  }
+  if (e.ctrlKey || e.metaKey || state.selection.mode) {
+    e.preventDefault();
+    state.selection.mode = true;
+    if (state.selection.ids.has(id)) state.selection.ids.delete(id);
+    else state.selection.ids.add(id);
+    state.selection.lastAnchor = id;
+    loadMessages();
+    return;
+  }
+  openMessage(id);
+}
+
+function selectionScopeKey() {
+  const f = state.filters;
+  return [state.activeAccountId, f.folder_id, f.search, f.party, f.date_from, f.date_to].join("|");
+}
+
+function resetSelection() {
+  state.selection.mode = false;
+  state.selection.ids = new Set();
+  state.selection.lastAnchor = null;
+  state.selection.scope = selectionScopeKey();
+  renderSelectionBar();
+}
+
+function renderSelectionBar() {
+  const bar = $("selectionBar");
+  if (!bar) return;
+  const n = state.selection.ids.size;
+  if (!state.selection.mode && n === 0) {
+    bar.classList.add("hidden");
+    bar.innerHTML = "";
+    return;
+  }
+  bar.classList.remove("hidden");
+  bar.innerHTML =
+    '<span class="sel-count">' + icon("check-square") +
+      toDigits(n) + " " + esc(t("list.selected", "selected")) + "</span>" +
+    '<button class="btn small" id="btnSelectAll">' + esc(t("list.selectAll", "Select all")) + "</button>" +
+    '<button class="btn small" id="btnClearSelection">' +
+      esc(t("list.clearSelection", "Clear selection")) + "</button>" +
+    '<button class="btn small btn-danger" id="btnDeleteSelected"' +
+      (n ? "" : " disabled") + ">" + icon("trash") +
+      esc(t("list.deleteSelected", "Delete selected")) +
+      (n ? " (" + toDigits(n) + ")" : "") + "</button>";
+  $("btnSelectAll").addEventListener("click", selectAllMessages);
+  $("btnClearSelection").addEventListener("click", () => { resetSelection(); loadMessages(); });
+  const del = $("btnDeleteSelected");
+  if (del && n) del.addEventListener("click", deleteSelectedMessages);
+}
+
+async function selectAllMessages() {
+  const filters = currentFilters();
+  const ids = await api().queryMessageIds(JSON.stringify(filters), state.sort);
+  if (!ids || ids.error_key) {
+    if (ids && ids.error_key) reportError(ids, { toast: true });
+    return;
+  }
+  // Select-all scope: the currently displayed (filtered) message set.
+  state.selection.ids = new Set(ids.map(Number));
+  state.selection.mode = true;
+  loadMessages();
+}
+
+async function deleteSelectedMessages() {
+  const ids = Array.from(state.selection.ids);
+  await deleteMessagesFromArchive(ids, !!state.filters.folder_id);
+}
+
+/* One confirmation, then a local-only deletion. No IMAP deletion command is
+   ever issued; tombstones keep the messages from coming back. */
+async function deleteMessagesFromArchive(ids, scopedToFolder) {
+  if (!ids || !ids.length) {
+    infoModal(t("viewer.deleteTitle", "Delete"),
+      t("viewer.deleteNoneSelected", "No message selected."));
+    return;
+  }
+  const n = ids.length;
+  showModal(
+    t("viewer.deleteTitle", "Delete"),
+    (n === 1
+      ? esc(t("viewer.deleteConfirm",
+            "Delete this message from the local archive? The copy on the mail server is not affected."))
+      : esc(t("viewer.deleteSelectedConfirm",
+            "Delete {n} selected messages from the local archive? The copies on the mail server are not affected."))
+        .replace("{n}", "<b>" + toDigits(n) + "</b>")) +
+    (scopedToFolder
+      ? '<div class="err-detail" style="margin-top:8px">' +
+        esc(t("viewer.deleteFolderScope",
+          "Only the copy in the current folder is removed; copies in other folders stay.")) + "</div>"
+      : ""),
+    [
+      { label: t("common.cancel", "Cancel"), primary: true },
+      {
+        label: t("viewer.delete", "Delete"), danger: true, onClick: async () => {
+          const res = await api().deleteMessages(JSON.stringify(ids),
+            state.filters.folder_id || null);
+          if (res && res.error_key) { reportError(res); return; }
+          const removed = res ? (res.messages || 0) : 0;
+          resetSelection();
+          state.openMessageId = null;
+          if (state.view === "archive") {
+            loadFolders();
+            loadMessages();
+            renderDetailEmpty();
+          }
+          toast(esc(t("viewer.deleted", "{n} message(s) deleted from the local archive."))
+            .replace("{n}", "<b>" + toDigits(removed || n) + "</b>"), "success");
+        }
+      }
+    ]);
 }
 
 function bindEmptyActions() {
@@ -762,6 +914,9 @@ async function openMessage(id) {
     '<div class="detail-actions">' +
     '<button class="btn btn-primary small" id="btnSaveEml">' + icon("file") +
       esc(t("viewer.saveEml", "Save original message (.eml)")) + "</button>" +
+    '<button class="btn btn-danger small" id="btnDeleteMessage" title="' +
+      esc(t("viewer.deleteTitle", "Delete from the local archive")) + '">' + icon("trash") +
+      esc(t("viewer.delete", "Delete")) + "</button>" +
     "</div>";
   if (m.attachments && m.attachments.length && m.complete === false) {
     // Only partial rows (complete=0) that actually carry identified,
@@ -788,6 +943,9 @@ async function openMessage(id) {
   const dlMissing = $("btnDownloadMissingAtt");
   if (dlMissing) dlMissing.addEventListener("click", () => downloadMissingAttachments([id]));
   $("btnSaveEml").addEventListener("click", () => api().saveEml(id).then((r) => fileResult(r)));
+  const delBtn = $("btnDeleteMessage");
+  if (delBtn) delBtn.addEventListener("click", () =>
+    deleteMessagesFromArchive([id], !!state.filters.folder_id));
 }
 
 function sanitizeHtml(html) {
@@ -873,7 +1031,9 @@ function renderSyncControls() {
       '<button class="btn" id="btnSyncBack">' + icon("archive") +
       esc(t("sync.backToArchive", "Back to Archive")) + "</button>";
     $("btnCancelSync").addEventListener("click", () => {
-      showModal(t("sync.cancel", "Cancel"), esc(t("sync.cancelConfirm", "Cancel?")), [
+      showModal(t("sync.cancelTitle", "Cancel Synchronization"),
+        esc(t("sync.cancelConfirm",
+          "Are you sure you want to cancel email synchronization?")), [
         { label: t("common.no", "No"), primary: true },
         { label: t("common.yes", "Yes"), danger: true, onClick: () => api().cancelSync() },
       ]);
@@ -1125,16 +1285,22 @@ function renderReport(r) {
     '<div class="report-list">' +
     reportRow(t("report.foldersProcessed", "Folders"), r.folders_processed || 0) +
     reportRow(t("report.newMessages", "New"), r.new_messages || 0) +
-    reportRow(t("report.deduped", "Deduped"), r.deduped || 0) +
+    reportRow(t("report.deduped", "Already archived (deduplicated)"), r.deduped || 0) +
     reportRow(t("report.archived", "Archived"), r.total_messages || 0) +
     reportRow(t("report.contacts", "Contacts"), r.total_contacts || 0) +
     reportRow(t("report.attachments", "Attachments"), r.total_attachments || 0) +
-    reportRow(t("report.errors", "Errors"), r.errors || 0) +
+    reportRow(t("report.failedMessages", "Failed or incomplete messages"),
+      r.failed_messages || (r.errors || 0)) +
+    reportRow(t("report.attachmentsFailed", "Failed or pending attachments"),
+      r.attachments_failed || 0) +
+    reportRow(t("report.skippedDeleted", "Skipped (locally deleted)"),
+      r.skipped_deleted || 0) +
     reportRow(t("report.elapsed", "Elapsed"), formatDuration(r.elapsed || 0)) +
     "</div>" +
     (r.error_folders && r.error_folders.length
       ? '<div class="sync-error">' + esc(t("report.errorFolders", "Error folders")) + ": " +
         esc(r.error_folders.join(", ")) + "</div>" : "") +
+    failedItemsBlock(r) +
     errorBlock +
     '<div class="sync-actions">' +
     '<button class="btn btn-primary" id="btnOpenViewer">' + icon("archive") +
@@ -1153,6 +1319,26 @@ function renderReport(r) {
 function reportRow(label, value) {
   return '<div class="report-row"><span>' + esc(label) + '</span><b>' +
     (typeof value === "number" ? toDigits(value) : esc(value)) + "</b></div>";
+}
+
+/* Optional per-item details of a partial synchronization: the affected
+   folder, UID and the sanitized reason, never credentials or raw protocol
+   text. Capped so a very bad mailbox cannot flood the report. */
+function failedItemsBlock(r) {
+  const items = r && r.failed_items ? r.failed_items : [];
+  if (!items.length) return "";
+  const rows = items.map((it) =>
+    '<div class="failed-item"><span class="failed-folder">' + esc(it.folder || "—") +
+    '</span><span class="failed-uid">UID ' + toDigits(it.uid || 0) + "</span>" +
+    '<span class="failed-reason" dir="auto">' + esc(it.reason || it.stage || "") +
+    "</span></div>").join("");
+  return '<div class="failed-items-block">' +
+    '<div class="failed-items-title">' +
+      esc(t("report.failedItems", "Messages needing another synchronization")) +
+      " (" + toDigits(items.length) +
+      (r.failed_messages > items.length
+        ? " " + esc(t("report.of", "of")) + " " + toDigits(r.failed_messages) : "") +
+    ")</div>" + rows + "</div>";
 }
 
 /* ---------------------------------------------------- certificate trust */
@@ -1786,7 +1972,8 @@ function renderUpdatePopover() {
         '<p class="upd-version" style="margin-top:8px">' +
         esc(t("update.currentVersion", "Current version")) + ": " +
         esc(appVersionDisplay()) + "</p>";
-      footer = actions(btn("updRetry", t("update.retry", "Check Again")));
+      footer = actions(btn("updRetry", t("update.retry", "Check Again")) +
+        btn("updClose", t("common.close", "Close")));
       break;
     case UPDATE.AVAILABLE:
       body = '<p class="upd-version">' +
@@ -1826,7 +2013,8 @@ function renderUpdatePopover() {
       body = '<div class="upd-body">' +
         esc(t("update.upToDateBody", "You are running the latest version of MailDaan.")) +
         "</div>";
-      footer = actions(btn("updRetry", t("update.retry", "Check Again")));
+      footer = actions(btn("updRetry", t("update.retry", "Check Again")) +
+        btn("updClose", t("common.close", "Close")));
       break;
   }
   box.innerHTML = head + '<div class="upd-body">' + body + "</div>" + footer;
@@ -2178,22 +2366,70 @@ function bindSettingsForms() {
     const sel = $("settingsAccount");
     const account = state.accounts.find((a) => a.id === sel.value);
     if (!account) return;
+    const name = account.display_name || account.email;
+    const afterRemove = async (res, keepMessageKey) => {
+      if (res && res.error_key) { reportError(res); return; }
+      state.accounts = await api().getAccounts();
+      state.activeAccountId = state.accounts.length ? state.accounts[0].id : null;
+      resetSelection();
+      renderAccounts();
+      if (keepMessageKey) {
+        toast(esc(t(keepMessageKey, "")).replace("{account}", "<b>" + esc(name) + "</b>"),
+          "success");
+      }
+      if (!state.accounts.length) { openAccountForm("first"); return; }
+      loadSettingsForms();
+      goArchive();
+    };
     showModal(
-      t("accounts.remove", "Remove Account"),
-      esc(t("accounts.removeConfirm", "Remove this account? The local archive is kept on disk."))
-        .replace("{account}", "<b>" + esc(account.display_name || account.email) + "</b>"),
+      t("accounts.removeTitle", "Remove Account"),
+      '<p style="margin:0 0 12px">' +
+        esc(t("accounts.removeChoose",
+          "Choose what happens to the local archive of {account}:"))
+          .replace("{account}", "<b>" + esc(name) + "</b>") + "</p>" +
+      '<div class="remove-opt">' +
+        '<span class="remove-opt-label">' + esc(t("accounts.remove", "Remove Account")) + "</span>" +
+        '<span class="remove-opt-desc">' +
+          esc(t("accounts.removeKeepDesc",
+            "The account disappears from MailDaan, but its local archive (database, .eml files and attachments) stays on this computer. It is reattached automatically when you add this mailbox again.")) +
+        "</span>" +
+      "</div>" +
+      '<div class="remove-opt danger">' +
+        '<span class="remove-opt-label">' +
+          esc(t("accounts.removeFull", "Remove Account and All Local Data")) + "</span>" +
+        '<span class="remove-opt-desc">' +
+          esc(t("accounts.removeFullDesc",
+            "Additionally deletes this account’s local archive from this computer: SQLite database, .eml files, attachments and synchronization checkpoints. Nothing on the mail server is ever deleted.")) +
+        "</span>" +
+      "</div>",
       [
         { label: t("common.cancel", "Cancel"), primary: true },
         {
-          label: t("accounts.remove", "Remove Account"), danger: true, onClick: async () => {
-            const res = await api().removeAccount(account.id);
-            if (res && res.error_key) { errorModal(res); return; }
-            state.accounts = await api().getAccounts();
-            state.activeAccountId = state.accounts.length ? state.accounts[0].id : null;
-            renderAccounts();
-            if (!state.accounts.length) { openAccountForm("first"); return; }
-            loadSettingsForms();
-            goArchive();
+          label: t("accounts.remove", "Remove Account"), onClick: async () => {
+            await afterRemove(await api().removeAccount(account.id, false),
+              "accounts.removeKept");
+          }
+        },
+        {
+          label: t("accounts.removeFull", "Remove Account and All Local Data"), danger: true,
+          keepOpen: true, onClick: () => {
+            // Destructive action: a second confirmation names the account
+            // and states plainly that local data cannot be recovered.
+            showModal(
+              t("accounts.removeFullTitle", "Delete Local Data"),
+              esc(t("accounts.removeFullConfirm",
+                  "Permanently delete the local archive of {account}? Its database, .eml files and attachments are removed from this computer and cannot be recovered without a separate backup. The messages on the mail server are not affected."))
+                .replace("{account}", "<b>" + esc(name) + "</b>"),
+              [
+                { label: t("common.cancel", "Cancel"), primary: true },
+                {
+                  label: t("accounts.removeFullConfirmAction", "Delete Permanently"),
+                  danger: true, onClick: async () => {
+                    await afterRemove(await api().removeAccount(account.id, true),
+                      "accounts.removedData");
+                  }
+                }
+              ]);
           }
         }
       ]);
@@ -2388,12 +2624,25 @@ function bindSearchAndFilters() {
     timer = setTimeout(() => {
       state.filters.search = value;
       state.page = 1;
+      resetSelection();
       if (state.view === "archive") loadMessages();
     }, 350);
   });
   $("sortSelect").addEventListener("change", (e) => {
     state.sort = e.target.value;
     if (state.view === "archive") loadMessages();
+  });
+  $("btnSelectMessages").addEventListener("click", () => {
+    state.selection.mode = !state.selection.mode;
+    if (state.selection.mode && state.selection.scope !== selectionScopeKey()) {
+      resetSelection();
+      state.selection.mode = true;
+    }
+    if (state.selection.mode) {
+      toast(esc(t("list.selectHint",
+        "Click or Ctrl-click to select, Shift-click for a range. Select All covers the messages currently shown.")), "info");
+    }
+    loadMessages();
   });
   $("btnFilters").addEventListener("click", () => {
     $("filterPanel").classList.toggle("hidden");
@@ -2402,6 +2651,7 @@ function bindSearchAndFilters() {
     state.filters.party = $("filterParty").value.trim();
     state.filters.folder_id = $("filterFolder").value ? Number($("filterFolder").value) : null;
     state.page = 1;
+    resetSelection();
     loadFolders();
     loadMessages();
   });
@@ -2413,6 +2663,7 @@ function bindSearchAndFilters() {
     state.filters = { search: "", folder_id: null, date_from: null, date_to: null, party: "" };
     $("searchBox").value = "";
     state.page = 1;
+    resetSelection();
     loadFolders();
     loadMessages();
   });

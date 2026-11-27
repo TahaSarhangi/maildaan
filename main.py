@@ -255,18 +255,120 @@ class AppApi:
         return {"ok": True, "account": accounts.public_account(account)}
 
     @requires_unlock
-    def removeAccount(self, account_id):
+    @user_facing
+    def removeAccount(self, account_id, delete_data=False):
+        """Remove an account, optionally with all of its local data.
+
+        delete_data=False removes only the registry entry: the archive,
+        EML files and attachments stay on disk and are reattached
+        automatically when the same mailbox is added again.
+        delete_data=True additionally deletes the account's dedicated
+        archive directory (never the server-side mailbox, and never another
+        account's data).
+        """
+        account = accounts.get_account(account_id)
+        if account is None:
+            return {"error_key": "accounts.notFound"}
         if self.sync_running() and self.sync_account_id == account_id:
             return {"error_key": "accounts.removeWhileSyncing"}
+        bytes_deleted = 0
+        if delete_data:
+            try:
+                result = accounts.remove_account_data(account)
+                bytes_deleted = result.get("bytes", 0)
+            except (OSError, ValueError) as exc:
+                # Partial deletion is never reported as success: the account
+                # stays registered so the user can retry or investigate.
+                logger.warning("account data deletion failed for %s: %s",
+                               account_id, exc)
+                return {"error_key": "accounts.deleteFailed",
+                        "error_detail": str(exc)}
         removed = accounts.remove_account(account_id)
         if not removed:
             return {"error_key": "accounts.notFound"}
+        if not delete_data:
+            # Keep the archive retrievable: the record allows reattaching the
+            # retained archive when the same mailbox is added again.
+            accounts.record_removed_archive(account)
         self.settings = config.load_settings()
         if self.settings.get("active_account_id") == account_id:
             registry = accounts.all_accounts()
             self.settings["active_account_id"] = registry[0]["id"] if registry else None
             config.save_settings(self.settings)
-        return {"ok": True}
+        return {"ok": True, "bytes": bytes_deleted}
+
+    @requires_unlock
+    @user_facing
+    def queryMessageIds(self, filters_json, sort="newest"):
+        """Ids of every message in the current filter scope (Select All)."""
+        account, paths = self._active_paths()
+        if account is None:
+            return []
+        filters = {}
+        try:
+            if filters_json:
+                filters = json.loads(filters_json)
+        except ValueError:
+            filters = {}
+        with storage.ArchiveDB(paths["db"]) as db:
+            rows = db.query_messages(filters, sort, page=1, page_size=1000000)
+            return [r["id"] for r in rows]
+
+    @requires_unlock
+    @user_facing
+    def deleteMessages(self, message_ids_json, folder_id=None):
+        """Delete one or more messages from the LOCAL archive only.
+
+        No IMAP deletion command is ever issued. The (folder, uid) pairs of
+        the removed memberships are recorded as tombstones so an ordinary
+        synchronization does not silently download them again, while failed
+        or incomplete downloads stay fully eligible for retry. A message
+        that also lives in another folder survives there untouched.
+        """
+        account, paths = self._active_paths()
+        if account is None:
+            return {"error_key": "accounts.none"}
+        # Never edit the archive while its own synchronization is writing
+        # to the same database and attachment directory.
+        if self.sync_running() and self.sync_account_id == account["id"]:
+            return {"error_key": "sync.statusRunning"}
+        try:
+            ids = json.loads(message_ids_json) if message_ids_json else []
+        except ValueError:
+            return {"error_key": "common.internalError"}
+        if not isinstance(ids, list) or not ids:
+            return {"error_key": "viewer.deleteNoneSelected"}
+        folder = int(folder_id) if folder_id else None
+        with storage.ArchiveDB(paths["db"]) as db:
+            result = db.delete_messages(ids, folder_id=folder)
+            referenced = db.referenced_attachment_paths(result.get("files", []))
+        removed_files, missing = [], []
+        for relpath in result.get("files", []):
+            if not relpath:
+                continue
+            target = os.path.join(paths["root"], relpath)
+            # Never remove a payload file that another message still uses.
+            if relpath in referenced:
+                continue
+            try:
+                if os.path.exists(target):
+                    os.remove(target)
+                    removed_files.append(relpath)
+            except OSError as exc:
+                logger.warning("could not remove archived file %s: %s", relpath, exc)
+                missing.append(os.path.basename(relpath))
+        if folder is None and result["messages"] == 0 and result["memberships"] == 0:
+            return {"error_key": "viewer.notFound"}
+        logger.info("local deletion: %d message(s), %d file(s) removed "
+                    "(account %s)", result["messages"], len(removed_files),
+                    account.get("email") or account.get("id"))
+        response = {"ok": True, "messages": result["messages"],
+                    "memberships": result["memberships"],
+                    "files_removed": len(removed_files)}
+        if missing:
+            response["error_key"] = "viewer.deleteFilesFailed"
+            response["error_detail"] = "; ".join(missing[:8])
+        return response
 
     @requires_unlock
     def selectAccount(self, account_id):
@@ -500,7 +602,10 @@ class AppApi:
             # The row exists but the payload file does not: the message was
             # archived without attachments. Say so — it is recoverable.
             return {"error_key": "viewer.attachmentMissing"}
-        target = dialogs.save_dialog("MailDaan", att["filename_safe"] or att["filename"])
+        # The stored payload uses a short physical name; the user saves the
+        # original readable filename.
+        original = storage.safe_filename(att["filename"]) if att.get("filename") else ""
+        target = dialogs.save_dialog("MailDaan", original or att["filename_safe"])
         if not target:
             return None
         try:
@@ -530,7 +635,8 @@ class AppApi:
             src = os.path.join(paths["root"], att["relpath"])
             if not os.path.exists(src):
                 continue
-            dest = os.path.join(target_dir, att["filename_safe"] or att["filename"])
+            original = storage.safe_filename(att["filename"]) if att.get("filename") else ""
+            dest = os.path.join(target_dir, original or att["filename_safe"])
             base, ext = os.path.splitext(dest)
             counter = 1
             while os.path.exists(dest):
@@ -632,10 +738,15 @@ class AppApi:
                             continue
                         content_hash = hashlib.sha256(raw).hexdigest()
                         parsed = imap_sync.parse_message(raw, content_hash)
-                        engine._write_files(raw, parsed)
+                        failed_atts = engine._write_files(raw, parsed)
+                        if failed_atts:
+                            # Keep the row incomplete: some payload files are
+                            # still missing and the message stays retryable.
+                            parsed["complete"] = False
                         with storage.ArchiveDB(paths["db"]) as db:
                             if db.complete_message(row["message_id"], parsed):
                                 completed += 1
+                            db.clear_sync_failure(row["folder_id"], row["uid"])
                     except Exception as exc:
                         logger.warning("attachment download failed for uid %s: %s",
                                        row.get("uid"), exc)

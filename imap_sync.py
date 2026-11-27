@@ -20,6 +20,7 @@ import ssl
 import threading
 import time
 import traceback
+from urllib.parse import unquote as _urlunquote
 from imapclient import IMAPClient
 from imapclient import exceptions as _imap_exceptions
 
@@ -28,6 +29,9 @@ import imaptls
 import storage
 
 BATCH_SIZE = 100
+# Bounded in-run retry: a recoverable per-message problem is attempted at
+# most twice in the same run, then recorded and left for a later sync.
+MAX_ATTEMPTS = 2
 LOG = logging.getLogger("maildaan.sync")
 
 
@@ -99,6 +103,45 @@ def html_to_text(value: str) -> str:
     text = re.sub(r"(?s)<[^>]+>", "", text)
     text = _html.unescape(text)
     return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def decode_attachment_filename(filename) -> str:
+    """Recover a readable attachment filename.
+
+    Correctly declared names (RFC 2231 / RFC 2047) are already decoded by
+    the email package. Some senders instead embed raw percent-encoded UTF-8
+    text in a plain quoted parameter, which no standard decoder reverses;
+    decode that defensively so the archive keeps the readable Persian,
+    English or mixed name instead of a wall of ``%XX`` sequences.
+    """
+    value = str(filename or "")
+    if "%" not in value:
+        return value
+    try:
+        decoded = _urlunquote(value, errors="strict")
+    except (ValueError, UnicodeDecodeError):
+        return value          # not a percent-encoded name; keep it verbatim
+    if decoded != value and "%" not in decoded and decoded.strip():
+        return decoded
+    return value
+
+
+def _is_transient(exc) -> bool:
+    """Whether a per-message failure is worth one immediate retry.
+
+    Network-class problems are transient; deterministic local errors (a bad
+    path, an encoding problem) are not retried within the same run — they
+    are recorded and the remaining messages keep flowing.
+    """
+    if isinstance(exc, (socket.timeout, TimeoutError, ConnectionError,
+                        ssl.SSLError, EOFError)):
+        return True
+    if isinstance(exc, _imap_exceptions.IMAPClientError):
+        return True
+    text = str(exc or "").lower()
+    return any(hint in text for hint in
+               ("timed out", "timeout", "connection ", "connection reset",
+                "broken pipe", "eof", "temporarily", "retry"))
 
 
 def _decode_header(value) -> str:
@@ -210,33 +253,45 @@ def parse_message(raw: bytes, content_hash: str) -> dict:
 
     plain_parts, html_parts = [], []
     attachments = []
+    incomplete = False
     for part in msg.walk():
         if part.is_multipart():
             continue
         ctype = part.get_content_type()
         disposition = (part.get_content_disposition() or "").lower()
-        filename = part.get_filename()
+        filename = decode_attachment_filename(part.get_filename())
         if filename or disposition == "attachment" or ctype.startswith("application/") or \
                 ctype.startswith("image/") or ctype.startswith("audio/") or \
                 ctype.startswith("video/") or "octet-stream" in ctype:
             try:
                 content = part.get_content()
             except Exception:
-                content = part.get_payload(decode=True)
+                content = None
+            if content is None:
+                try:
+                    content = part.get_payload(decode=True)
+                except Exception:
+                    content = None
             if isinstance(content, str):
                 content = content.encode("utf-8", "replace")
             if content is None:
+                # This one attachment cannot be decoded. Keep the message
+                # and every other attachment, and keep the row incomplete so
+                # the missing part stays eligible for a later pass.
+                incomplete = True
+                LOG.warning("attachment payload unreadable in %s",
+                            content_hash[:16])
                 continue
-            safe = storage.safe_filename(filename or
-                                         (ctype.split("/")[-1] or "attachment"))
             idx = len(attachments)
+            physical = storage.attachment_physical_name(
+                idx, content_hash, filename, ctype)
             attachments.append({
-                "filename": filename or safe,
-                "filename_safe": f"{idx:03d}-{safe}",
+                "filename": filename or physical,
+                "filename_safe": physical,
                 "size": len(content),
                 "mime_type": ctype,
                 "relpath": os.path.join("attachments", content_hash[:16],
-                                        f"{idx:03d}-{safe}"),
+                                        physical),
                 "content": content,
             })
             continue
@@ -281,6 +336,7 @@ def parse_message(raw: bytes, content_hash: str) -> dict:
         "eml_relpath": storage.eml_relpath_for(content_hash),
         "recipients": recipients,
         "attachments": attachments,
+        "complete": not incomplete,
     }
 
 
@@ -471,6 +527,9 @@ class SyncEngine:
             self.state.phase = "connecting"
         started = time.time()
         new_total, dedup_total, err_total = 0, 0, 0
+        skipped_deleted = 0
+        att_fail_total = 0
+        failed_items = []  # message-level failures: {folder, uid, reason}
         status = "completed"
         try:
             client = self._connect()
@@ -516,6 +575,7 @@ class SyncEngine:
             folders = self._discover_folders(client)
             # Phase 1: count pending work for accurate progress
             plan = []  # (folder_id, imap_name, display, uidvalidity, pending_uids)
+            skipped_deleted = 0
             for imap_name, display in folders:
                 if self.cancel.is_set():
                     break
@@ -534,8 +594,18 @@ class SyncEngine:
                     # mistaken for the charset.
                     pending = [u for u in client.search(["UID", f"{last_uid + 1}:*"])
                                if isinstance(u, int) and u > last_uid]
+                    # UIDs that failed in an earlier run stay eligible even
+                    # though the checkpoint has moved past them.
+                    pending = sorted(set(pending) | self.db.sync_failures_for(folder_id))
+                    # Messages the user deliberately deleted from the local
+                    # archive must not come back through an ordinary sync.
+                    tombstones = self.db.deleted_uids_for(folder_id)
+                    if tombstones:
+                        skipped_deleted += len(
+                            [u for u in pending if u > last_uid and u in tombstones])
+                        pending = [u for u in pending if u not in tombstones]
                     if pending:
-                        plan.append((folder_id, imap_name, display, pending))
+                        plan.append((folder_id, imap_name, display, int(uidvalidity), pending))
                 except Exception as exc:
                     LOG.warning("Cannot select folder %s: %s", imap_name, exc)
                     err_total += 1
@@ -546,10 +616,10 @@ class SyncEngine:
 
             with self.state.lock:
                 self.state.folders_total = len(plan)
-                self.state.total_pending = sum(len(p[3]) for p in plan)
+                self.state.total_pending = sum(len(p[4]) for p in plan)
                 self.state.start_time = time.time()
 
-            for folder_id, imap_name, display, pending in plan:
+            for folder_id, imap_name, display, uidvalidity, pending in plan:
                 if self.cancel.is_set():
                     status = "cancelled"
                     break
@@ -568,11 +638,15 @@ class SyncEngine:
                         self.state.last_error = str(exc)
                         self.state.folders_done += 1
                     continue
-                folder_new, folder_dedup, folder_err = self._sync_folder(
-                    client, folder_id, pending)
+                client, folder_new, folder_dedup, folder_err, folder_skipped, \
+                    folder_att_err, folder_failures = self._sync_folder(
+                        client, folder_id, pending, uidvalidity, display)
                 new_total += folder_new
                 dedup_total += folder_dedup
                 err_total += folder_err
+                skipped_deleted += folder_skipped
+                att_fail_total += folder_att_err
+                failed_items.extend(folder_failures)
                 with self.state.lock:
                     self.state.folders_done += 1
                 if folder_err:
@@ -620,6 +694,14 @@ class SyncEngine:
             "error_folders": list(self.state.error_folders),
             "error_key": getattr(self, "_run_error_key", None),
             "last_error": self.state.last_error,
+            # Partial-failure reporting: readable counters plus a capped list
+            # of the individual items that still need attention. Reasons are
+            # sanitized to a single short line — never credentials, tokens
+            # or message content.
+            "skipped_deleted": skipped_deleted,
+            "attachments_failed": att_fail_total,
+            "failed_messages": len(failed_items),
+            "failed_items": failed_items[:50],
         }
 
     def _discover_folders(self, client):
@@ -639,8 +721,23 @@ class SyncEngine:
         folders.sort(key=lambda x: (0 if x[0].upper() == "INBOX" else 1, x[0]))
         return folders
 
-    def _sync_folder(self, client, folder_id: int, pending: list):
+    def _sync_folder(self, client, folder_id: int, pending: list,
+                     uidvalidity: int = 0, display: str = ""):
+        """Sync one folder; a single bad message never stops the rest.
+
+        The checkpoint is advanced over every UID that was actually
+        completed (including deduplicated ones), while UIDs that failed are
+        recorded in ``sync_failures`` so they stay eligible for the next
+        synchronization despite the checkpoint having moved past them.
+
+        Returns (client, new, dedup, errors, skipped_deleted,
+        attachments_failed, failed_items). The client heads the tuple because
+        a transient connection loss may have forced a reconnect inside this
+        method; the caller must keep using the returned connection.
+        """
         new_count = dedup_count = err_count = 0
+        skipped_count = att_err_count = 0
+        failed_items = []
         for i in range(0, len(pending), BATCH_SIZE):
             if self.cancel.is_set():
                 break
@@ -658,20 +755,47 @@ class SyncEngine:
                     fetched = client.fetch(batch, ["BODYSTRUCTURE", "BODY.PEEK[HEADER]"])
                     body_plans = self._fetch_body_sections(client, batch, fetched)
             except Exception as exc:
+                # Fetch-level failure: most often a broken connection. Try one
+                # controlled reconnection; if the server is truly unavailable,
+                # treat it as the global failure it is instead of churning.
                 LOG.warning("Fetch failed in folder %s: %s", folder_id, exc)
-                err_count += len(batch)
-                with self.state.lock:
-                    self.state.last_error = str(exc)
-                self.db.set_folder_error(folder_id, True)
-                break  # keep checkpoint at last good position
-            batch_ok = True
+                if not self.cancel.is_set() and _is_transient(exc):
+                    try:
+                        client = self._reconnect(client)
+                        if self.with_attachments:
+                            fetched = client.fetch(batch, ["BODY.PEEK[]"])
+                            body_plans = None
+                        else:
+                            fetched = client.fetch(batch, ["BODYSTRUCTURE", "BODY.PEEK[HEADER]"])
+                            body_plans = self._fetch_body_sections(client, batch, fetched)
+                    except Exception as retry_exc:
+                        LOG.error("Reconnect after fetch failure failed: %s", retry_exc)
+                        raise _classify_connect_failure(
+                            retry_exc, self.host, self.port) from retry_exc
+                else:
+                    # Record the batch and let the remaining messages of the
+                    # folder run continue where possible; re-raising global
+                    # non-transient errors would discard the whole folder.
+                    for uid in batch:
+                        self.db.record_sync_failure(
+                            folder_id, uid, uidvalidity, self._reason(exc, "fetch"))
+                        failed_items.append({"folder": display, "uid": uid,
+                                             "stage": "fetch",
+                                             "reason": self._reason(exc, "fetch")})
+                        err_count += 1
+                    with self.state.lock:
+                        self.state.last_error = str(exc)
+                    self.db.set_folder_error(folder_id, True)
+                    continue
+            ok_uids = []
+            batch_err = False
             for uid in batch:
+                if self.cancel.is_set():
+                    break
                 try:
                     raw = self._extract_raw(fetched, uid)
                     if not raw:
-                        err_count += 1
-                        batch_ok = False
-                        continue
+                        raise ValueError("message body missing from server response")
                     content_hash = hashlib.sha256(raw).hexdigest()
                     if self.db.message_hash_exists(content_hash):
                         self.db.insert_message(
@@ -680,50 +804,128 @@ class SyncEngine:
                     else:
                         if self.with_attachments:
                             parsed = parse_message(raw, content_hash)
-                            self._write_files(raw, parsed)
-                            self.db.insert_message(parsed, folder_id, uid)
+                            failed_atts = self._write_files(raw, parsed)
+                            if failed_atts:
+                                # One bad attachment must not discard the
+                                # message or the other attachments.
+                                att_err_count += len(failed_atts)
+                                parsed["complete"] = False
                         else:
                             parsed = self._parse_partial(
                                 fetched, uid, content_hash,
                                 body_plans.get(uid, {}) if body_plans else {})
                             self._write_files(raw, parsed)
-                            self.db.insert_message(parsed, folder_id, uid)
+                        self.db.insert_message(parsed, folder_id, uid)
+                        if not parsed.get("complete", True):
+                            att_err_count = max(att_err_count, 1)
                         new_count += 1
+                    ok_uids.append(uid)
+                    self.db.clear_sync_failure(folder_id, uid)
                 except Exception as exc:
-                    LOG.warning("Failed to process UID %s: %s", uid, exc)
-                    err_count += 1
-                    batch_ok = False
+                    # Message-specific failure: record it and keep going. A
+                    # single recoverable retry is attempted for transient
+                    # network-class errors only, so one bad attachment can
+                    # never stall thousands of healthy messages.
+                    attempts = 1
+                    while attempts < MAX_ATTEMPTS and _is_transient(exc) \
+                            and not self.cancel.is_set():
+                        attempts += 1
+                        try:
+                            refetch = client.fetch([uid], ["BODY.PEEK[]"])
+                            raw = self._extract_raw(refetch, uid)
+                            if not raw:
+                                raise ValueError("message body missing from server response")
+                            content_hash = hashlib.sha256(raw).hexdigest()
+                            if self.db.message_hash_exists(content_hash):
+                                self.db.insert_message(
+                                    {"content_hash": content_hash}, folder_id, uid)
+                                dedup_count += 1
+                            else:
+                                parsed = parse_message(raw, content_hash)
+                                failed_atts = self._write_files(raw, parsed)
+                                if failed_atts:
+                                    att_err_count += len(failed_atts)
+                                    parsed["complete"] = False
+                                self.db.insert_message(parsed, folder_id, uid)
+                                new_count += 1
+                            ok_uids.append(uid)
+                            self.db.clear_sync_failure(folder_id, uid)
+                            exc = None
+                            break
+                        except Exception as retry_exc:
+                            exc = retry_exc
+                    if exc is not None:
+                        LOG.warning("Failed to process UID %s: %s", uid, exc)
+                        self.db.record_sync_failure(
+                            folder_id, uid, uidvalidity, self._reason(exc, "process"))
+                        failed_items.append({"folder": display, "uid": uid,
+                                             "stage": "process",
+                                             "reason": self._reason(exc, "process")})
+                        err_count += 1
+                        batch_err = True
                 with self.state.lock:
                     self.state.total_processed += 1
                     self.state.folder_processed += 1
                 if self.cancel.is_set():
-                    batch_ok = False
                     break
-            # Advance checkpoint ONLY when the whole batch succeeded.
-            if batch_ok and not self.cancel.is_set():
-                self.db.advance_checkpoint(folder_id, max(batch))
-                self.db.set_folder_error(folder_id, False)
-            else:
+            # Advance the checkpoint over the UIDs actually completed in
+            # this batch. Failed UIDs live in sync_failures, so the
+            # checkpoint can safely pass them: they remain pending.
+            if ok_uids and not self.cancel.is_set():
+                self.db.advance_checkpoint(folder_id, max(ok_uids))
+            if batch_err:
                 self.db.set_folder_error(folder_id, True)
-                break
-        return new_count, dedup_count, err_count
+            else:
+                self.db.set_folder_error(folder_id, False)
+        return (client, new_count, dedup_count, err_count, skipped_count,
+                att_err_count, failed_items)
 
-    def _write_files(self, raw: bytes, parsed: dict) -> None:
-        data_dir = self.data_dir or config.get_data_dir()
+    @staticmethod
+    def _reason(exc, stage: str) -> str:
+        """Sanitized one-line error reason for the sync report and log."""
+        text = str(exc or "").replace("\r", " ").replace("\n", " ").strip()
+        if len(text) > 160:
+            text = text[:160] + "…"
+        return f"[{stage}] {text}" if text else stage
+
+    def _reconnect(self, client) -> IMAPClient:
+        """One controlled reconnect after a transient connection loss."""
+        try:
+            client.logout()
+        except Exception:
+            pass
+        return self._connect()
+
+    def _write_files(self, raw: bytes, parsed: dict) -> list:
+        """Write the EML and the attachment payload files.
+
+        Returns the attachments whose payload could not be written. The
+        caller keeps the message and the successful attachments and marks
+        the row incomplete, so a bad name or an unwritable file never
+        discards a whole message.
+        """
+        data_dir = self.data_dir or config.get_legacy_data_dir()
         eml_path = os.path.join(data_dir, parsed["eml_relpath"])
         os.makedirs(os.path.dirname(eml_path), exist_ok=True)
         if not os.path.exists(eml_path):
             with open(eml_path, "wb") as fh:
                 fh.write(raw)
+        failed = []
         for att in parsed["attachments"]:
             content = att.pop("content", None)
             if content is None:
                 continue
             att_path = os.path.join(data_dir, att["relpath"])
-            os.makedirs(os.path.dirname(att_path), exist_ok=True)
-            if not os.path.exists(att_path):
-                with open(att_path, "wb") as fh:
-                    fh.write(content)
+            try:
+                os.makedirs(os.path.dirname(att_path), exist_ok=True)
+                if not os.path.exists(att_path):
+                    with open(att_path, "wb") as fh:
+                        fh.write(content)
+            except OSError as exc:
+                LOG.warning("Attachment write failed for %s: %s",
+                            att.get("filename"), exc)
+                failed.append(att)
+        return failed
 
     def _fetch_body_sections(self, client, uids, fetched) -> dict:
         """Fetch the readable text sections named by BODYSTRUCTURE.
@@ -835,7 +1037,8 @@ class SyncEngine:
         # Attachment metadata from BODYSTRUCTURE
         attachments = []
         if bodystruct:
-            self._collect_attachment_meta(bodystruct, attachments)
+            self._collect_attachment_meta(bodystruct, attachments,
+                                          content_hash=content_hash)
         return {
             "content_hash": content_hash,
             "message_id": message_id,
@@ -853,7 +1056,7 @@ class SyncEngine:
             "complete": False,
         }
 
-    def _collect_attachment_meta(self, part, out, idx=None):
+    def _collect_attachment_meta(self, part, out, idx=None, content_hash=None):
         """Recursively collect attachment metadata from BODYSTRUCTURE."""
         # part is a list/tuple from IMAPClient: [type, subtype, params, id,
         # desc, enc, size, md5, (disposition ...), ...]. Fields are bytes.
@@ -867,12 +1070,13 @@ class SyncEngine:
             ctype, filename, disposition = _part_info(part)
             if _is_attachment_part(ctype, filename, disposition):
                 size = part[6] if len(part) > 6 and isinstance(part[6], int) else 0
-                safe = storage.safe_filename(filename or
-                                             (ctype.split("/")[-1] or "attachment"))
+                filename = decode_attachment_filename(filename)
+                physical = storage.attachment_physical_name(
+                    idx[0], content_hash or "", filename, ctype)
                 idx[0] += 1
                 out.append({
-                    "filename": filename or safe,
-                    "filename_safe": f"{idx[0]:03d}-{safe}",
+                    "filename": filename or physical,
+                    "filename_safe": physical,
                     "size": size,
                     "mime_type": ctype,
                     "relpath": "",

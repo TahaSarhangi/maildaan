@@ -11,6 +11,7 @@ non-destructively as the first account, referenced in place.
 import datetime as _dt
 import json
 import os
+import shutil
 import uuid
 
 import config
@@ -99,8 +100,178 @@ def ensure_dirs(account) -> None:
         os.makedirs(path, exist_ok=True)
 
 
+def _removed_archives_path() -> str:
+    """Index of archives kept on disk after a 'remove account only' action."""
+    return os.path.join(config.get_base_dir(), "removed_archives.json")
+
+
+def load_removed_archives() -> list:
+    path = _removed_archives_path()
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except (OSError, ValueError):
+        return []
+    return [a for a in raw if isinstance(a, dict) and a.get("id")]
+
+
+def _save_removed_archives(records: list) -> None:
+    path = _removed_archives_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(records, fh, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+
+def record_removed_archive(account) -> None:
+    """Remember an archive deliberately kept on disk (remove-account-only).
+
+    The record carries the original account identity (id, email, host) so the
+    archive can be reattached exactly when the same mailbox is added again —
+    its checkpoints, tombstones and downloaded messages stay usable and the
+    archive is never silently orphaned."""
+    try:
+        records = load_removed_archives()
+        records = [r for r in records if r.get("id") != account.get("id")]
+        records.append({
+            "id": account.get("id"),
+            "display_name": account.get("display_name") or "",
+            "email": (account.get("email") or "").strip().lower(),
+            "imap_host": account.get("imap_host") or "",
+            "imap_port": account.get("imap_port") or 993,
+            "storage": account.get("storage") or "standard",
+            "removed_at": utc_now_iso(),
+        })
+        _save_removed_archives(records)
+    except OSError:
+        pass  # the archive stays on disk even if the index cannot be kept
+
+
+def pop_removed_archive(email: str):
+    """Take back the retained archive of a mailbox, if one was kept.
+
+    Reattaching reuses the original account id, so the existing directory,
+    its SQLite archive, EML files and attachments are used in place."""
+    if not email:
+        return None
+    wanted = str(email).strip().lower()
+    records = load_removed_archives()
+    match = next((r for r in records
+                  if (r.get("email") or "").strip().lower() == wanted
+                  and r.get("storage") == "standard"), None)
+    if match is None:
+        return None
+    if not os.path.isdir(config.get_account_dir(match["id"])):
+        # Nothing was actually retained (for example a separate data Removal
+        # already deleted it): drop the stale index entry.
+        _save_removed_archives([r for r in records if r.get("id") != match["id"]])
+        return None
+    _save_removed_archives([r for r in records if r.get("id") != match["id"]])
+    return match
+
+
+def _dir_size(path: str) -> int:
+    total = 0
+    for dirpath, _dirs, files in os.walk(path):
+        for name in files:
+            try:
+                total += os.path.getsize(os.path.join(dirpath, name))
+            except OSError:
+                pass
+    return total
+
+
+def remove_account_data(account) -> dict:
+    """Delete exactly one account's dedicated local archive directory.
+
+    The deletion target is validated against the expected account directory
+    before anything is removed: path traversal and deletion of shared
+    application directories are impossible by construction. Server-side
+    data is never touched — this only clears the local copy.
+
+    Returns {'removed': True, 'bytes': n}. Raises OSError/ValueError with a
+    concrete message when the directory cannot be deleted; the caller must
+    then keep the account registered instead of reporting success."""
+    account_id = account.get("id")
+    if not account_id:
+        raise ValueError("unknown account")
+    storage_kind = account.get("storage")
+    targets = []
+    if storage_kind == "legacy":
+        # The MailDaan 1.0 folder also holds the legacy settings file, so
+        # only its archive contents are removed, not the folder itself.
+        root = config.get_legacy_data_dir()
+        targets = [os.path.join(root, "maildaan.db"),
+                   os.path.join(root, "eml"),
+                   os.path.join(root, "attachments")]
+        description = "legacy archive"
+    else:
+        accounts_root = os.path.normcase(os.path.realpath(config.get_accounts_root()))
+        expected = config.get_account_dir(account_id)
+        real_nc = os.path.normcase(os.path.realpath(expected))
+        # Constrain deletion to exactly <accounts_root>\<account_id>: neither
+        # path traversal nor deletion of a shared directory is possible.
+        if os.path.basename(real_nc) != account_id \
+                or os.path.dirname(real_nc) != accounts_root:
+            raise ValueError("the account directory does not match its expected path")
+        if not os.path.isdir(accounts_root):
+            raise OSError("the accounts directory is not accessible")
+        targets = [expected]
+        description = "account directory"
+    existing = [t for t in targets if os.path.exists(t)]
+    if not existing:
+        return {"removed": True, "bytes": 0, "not_found": True}
+    total = sum(_dir_size(t) for t in existing)
+    failures = []
+    for target in existing:
+        try:
+            if os.path.isdir(target):
+                shutil.rmtree(target)
+            else:
+                os.remove(target)
+        except OSError as exc:
+            failures.append(f"{os.path.basename(target)}: {exc}")
+    if failures:
+        raise OSError("could not delete the " + description +
+                      " completely: " + "; ".join(failures))
+    # A retained-archive index entry is obsolete once its data is gone.
+    try:
+        records = [r for r in load_removed_archives()
+                   if r.get("id") != account_id]
+        _save_removed_archives(records)
+    except OSError:
+        pass
+    return {"removed": True, "bytes": total}
+
+
 def create_account(display_name: str, email: str, host: str, port: int) -> dict:
-    """Register a new account with its own empty archive storage."""
+    """Register a new account with its own empty archive storage.
+
+    A previously retained archive of the same mailbox is reattached in
+    place: the original account id and directory are reused, so the user
+    gets back their checkpoints, EML files and attachments."""
+    removed = pop_removed_archive(email)
+    if removed:
+        account = {
+            "id": removed["id"],
+            "display_name": (display_name or "").strip() or removed.get("display_name", ""),
+            "email": (email or "").strip().lower(),
+            "imap_host": (host or "").strip(),
+            "imap_port": int(port or 993),
+            "storage": "standard",
+            "created_at": removed.get("removed_at") or utc_now_iso(),
+            "last_sync_at": "",
+            "last_sync_status": "",
+        }
+        ensure_dirs(account)
+        accounts = load_registry()
+        if not any(a["id"] == account["id"] for a in accounts):
+            accounts.append(account)
+            save_registry(accounts)
+        return account
     account = {
         "id": _new_id(),
         "display_name": (display_name or "").strip(),

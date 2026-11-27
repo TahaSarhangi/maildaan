@@ -8,7 +8,7 @@ search and export your email — **completely offline**.
 **Language:** [English](README.md) · [فارسی (Persian)](README.fa.md)
 
 - **Developer:** Titanium — https://github.com/TahaSarhangi
-- **Version:** 1.3.1
+- **Version:** 1.4.0
 - **License:** MIT (see [LICENSE](LICENSE))
 
 ## Why MailDaan
@@ -81,7 +81,7 @@ an existing archive, never needs one.
 
 ## Completely offline installer
 
-`MailDaan-Setup-1.3.1.exe` is a single, fully self-contained setup program:
+`MailDaan-Setup-1.4.0.exe` is a single, fully self-contained setup program:
 
 - It embeds the official **Microsoft Edge WebView2 Fixed Version Runtime (x64)** and uses
   that private copy, so setup **never installs, downloads or asks for** a system WebView2
@@ -109,10 +109,10 @@ has been blurred so no user data is exposed.
 
 ## Download and install
 
-1. Download **`MailDaan-Setup-1.3.1.exe`** from the
+1. Download **`MailDaan-Setup-1.4.0.exe`** from the
    [Releases](https://github.com/TahaSarhangi/maildaan/releases) page.
 2. Run it — no internet connection is required. Verify the download anytime against the
-   published `MailDaan-Setup-1.3.1.exe.sha256` checksum file.
+   published `MailDaan-Setup-1.4.0.exe.sha256` checksum file.
 3. Launch **MailDaan** from the Start Menu (an optional desktop shortcut is offered).
 
 Your archive is stored separately in `%LOCALAPPDATA%\MailDaan` and survives updates and
@@ -138,6 +138,47 @@ uninstallations.
 6. **Create an Excel report** (optional) — open the report dialog, pick the purpose and
    scope (dates, folders, direction, drafts, keyword) and the sheets you want, and
    generate a formatted bilingual workbook with summaries, charts and statistics.
+
+## What's new in 1.4.0
+
+- **Flexible account removal** — removing an account now offers two clear options. *Remove
+  Account* unregisters the account while keeping its local archive (database, `.eml` files,
+  attachments) on your computer; the archive is reattached automatically when you add the
+  same mailbox again. *Remove Account and All Local Data* additionally deletes the
+  account's archive directory from this computer after a second confirmation — the mail
+  server is never touched. Removal is blocked while the account is synchronizing.
+- **Confirmation before cancelling a synchronization** — cancelling a running
+  synchronization now asks first ("Are you sure you want to cancel email synchronization?"
+  / "آیا مطمئن هستید که می‌خواهید فرایند همگام‌سازی ایمیل‌ها را لغو کنید؟"), so an
+  accidental click never interrupts a long download. Downloaded messages are still kept
+  and the next sync resumes from the checkpoint.
+- **Close button on the update dialog** — the "you are running the latest version" dialog
+  now has its own **Close** button next to *Check Again*, so it no longer has to be
+  dismissed through the window.
+- **Delete messages from the local archive** — select one or more emails (checkbox mode,
+  Ctrl-click, Shift-click for a range, *Select all* / *Clear selection*) and delete them
+  from the local archive with a single confirmation. The copies on the mail server are
+  never affected, and removed messages are not silently downloaded again by an ordinary
+  synchronization. Deleting from a folder view removes only that folder's copy; a message
+  that also exists in another folder stays there untouched.
+- **More reliable synchronization** — a single broken message can no longer stall or
+  partially fail a whole synchronization: failing messages are isolated, retried once in
+  the same run when the problem is transient, and otherwise recorded for the next sync
+  while all remaining messages keep downloading. The resume checkpoint now advances over
+  every message actually completed, so the next synchronization never re-downloads
+  successful messages and never skips failed ones.
+- **Fixed very long or Persian attachment filenames** — some senders embed a raw
+  percent-encoded filename (for example `%D8%A7%DB%8C...`) instead of a properly encoded
+  one; the archive kept the unreadable text and, with very long names, could exceed the
+  Windows path limit and fail the whole message. Attachment payloads are now stored under
+  short deterministic names while the original readable name is kept and used when you
+  save the file, and an unreadable single attachment no longer discards the message or the
+  other attachments.
+- **Clearer end-of-sync report** — the synchronization report now distinguishes new
+  messages, already-archived (deduplicated) messages, failed or incomplete messages,
+  failed or pending attachments, and messages skipped because they were deleted locally —
+  together with a capped, sanitized per-message list of what still needs another
+  synchronization.
 
 ## What's new in 1.3.1
 

@@ -89,6 +89,29 @@ CREATE TABLE IF NOT EXISTS sync_log (
     errors INTEGER DEFAULT 0,
     elapsed_seconds REAL DEFAULT 0
 );
+-- Locally deleted messages, remembered per folder so an ordinary IMAP
+-- synchronization never silently restores a message the user removed from
+-- the local archive. Scoped by UIDVALIDITY: after a genuine change the
+-- tombstones no longer match and every server message is eligible again.
+CREATE TABLE IF NOT EXISTS deleted_uids (
+    folder_id INTEGER NOT NULL,
+    uid INTEGER NOT NULL,
+    uidvalidity INTEGER NOT NULL,
+    deleted_at TEXT,
+    PRIMARY KEY (folder_id, uid)
+);
+-- Per-message failures of the latest run. UIDs recorded here stay eligible
+-- for the next synchronization even after the folder checkpoint has moved
+-- past them, so a checkpoint never falsely marks a failed item as done.
+CREATE TABLE IF NOT EXISTS sync_failures (
+    folder_id INTEGER NOT NULL,
+    uid INTEGER NOT NULL,
+    uidvalidity INTEGER NOT NULL,
+    reason TEXT,
+    attempts INTEGER NOT NULL DEFAULT 1,
+    last_attempt TEXT,
+    PRIMARY KEY (folder_id, uid)
+);
 CREATE INDEX IF NOT EXISTS idx_messages_date ON messages(date_ts);
 CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_email);
 CREATE INDEX IF NOT EXISTS idx_recipients_email ON recipients(email);
@@ -151,6 +174,24 @@ def safe_filename(name: str, fallback: str = "file") -> str:
     name = os.path.basename(name.replace("\\", "/"))
     name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name).strip(" .")
     return name[:180] or fallback
+
+
+def attachment_physical_name(index: int, content_hash: str, filename: str = "",
+                             mime_type: str = "") -> str:
+    """Short, unique, filesystem-safe physical name for one attachment file.
+
+    The original readable name is kept in the archive metadata; only the
+    stored payload file uses this compact deterministic name. This keeps
+    every attachment path far below the Windows MAX_PATH limit even when a
+    sender handed over a very long, percent-encoded or non-Latin filename,
+    and prevents collisions between attachments.
+    """
+    ext = os.path.splitext(filename or "")[1].lstrip(".")
+    if not ext and mime_type:
+        ext = mime_type.split("/")[-1] or ""
+    ext = re.sub(r"[^A-Za-z0-9]", "", ext)[:12].lower()
+    return "%03d-%s%s" % (index, content_hash[16:28],
+                          ("." + ext) if ext else "")
 
 
 # ArchiveDB setup (schema, migration, index build) is serialized per database
@@ -296,6 +337,15 @@ class ArchiveDB:
                     self.conn.execute(
                         "UPDATE folders SET uidvalidity=?, last_completed_uid=0, has_error=0 "
                         "WHERE id=?", (uidvalidity, row["id"]))
+                    # Tombstones and failure records of the old UIDVALIDITY no
+                    # longer identify any message: drop them so they can never
+                    # suppress or resurrect unrelated UIDs of the new epoch.
+                    self.conn.execute(
+                        "DELETE FROM deleted_uids WHERE folder_id=? AND uidvalidity<>?",
+                        (row["id"], uidvalidity))
+                    self.conn.execute(
+                        "DELETE FROM sync_failures WHERE folder_id=? AND uidvalidity<>?",
+                        (row["id"], uidvalidity))
                 return row["id"]
             cur = self.conn.execute(
                 "INSERT INTO folders (imap_name, display_name, uidvalidity) VALUES (?,?,?)",
@@ -320,6 +370,153 @@ class ArchiveDB:
             self.conn.execute("UPDATE folders SET has_error=? WHERE id=?",
                               (1 if has_error else 0, folder_id))
             self.conn.commit()
+
+    # ------------------------------------------------- tombstones & failures
+
+    def _folder_uidvalidity(self, folder_id: int) -> int:
+        row = self.conn.execute(
+            "SELECT uidvalidity FROM folders WHERE id=?", (folder_id,)).fetchone()
+        return int(row["uidvalidity"]) if row else 0
+
+    def mark_uid_deleted(self, folder_id: int, uid: int) -> None:
+        """Remember an intentionally deleted message so a later ordinary
+        synchronization does not silently download it again. The record is
+        scoped to the folder's current UIDVALIDITY."""
+        with self._lock:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO deleted_uids (folder_id, uid, uidvalidity, deleted_at) "
+                "SELECT ?, ?, uidvalidity, ? FROM folders WHERE id=?",
+                (folder_id, uid, utc_now_iso(), folder_id))
+            self.conn.commit()
+
+    def deleted_uids_for(self, folder_id: int) -> set:
+        """UIDs to skip during synchronization (intentional local deletions
+        that belong to the folder's current UIDVALIDITY epoch)."""
+        with self._lock:
+            if self.conn.execute(
+                    "SELECT 1 FROM deleted_uids WHERE folder_id=? LIMIT 1",
+                    (folder_id,)).fetchone() is None:
+                return set()
+            uv = self._folder_uidvalidity(folder_id)
+            return {r["uid"] for r in self.conn.execute(
+                "SELECT uid FROM deleted_uids WHERE folder_id=? AND uidvalidity=?",
+                (folder_id, uv))}
+
+    def record_sync_failure(self, folder_id: int, uid: int, uidvalidity: int,
+                            reason: str) -> None:
+        """Record (or re-count) a per-message failure.
+
+        Failed UIDs stay eligible for the next synchronization even when the
+        folder checkpoint has already advanced past them; this table is the
+        counterpart that keeps them visible."""
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO sync_failures (folder_id, uid, uidvalidity, reason, "
+                "  attempts, last_attempt) VALUES (?,?,?,?,1,?) "
+                "ON CONFLICT(folder_id, uid) DO UPDATE SET "
+                "  uidvalidity=excluded.uidvalidity, reason=excluded.reason, "
+                "  attempts=attempts+1, last_attempt=excluded.last_attempt",
+                (folder_id, uid, uidvalidity, reason, utc_now_iso()))
+            self.conn.commit()
+
+    def clear_sync_failure(self, folder_id: int, uid: int) -> None:
+        with self._lock:
+            self.conn.execute(
+                "DELETE FROM sync_failures WHERE folder_id=? AND uid=?",
+                (folder_id, uid))
+            self.conn.commit()
+
+    def sync_failures_for(self, folder_id: int) -> set:
+        """UIDs that failed during an earlier run and must be retried
+        (restricted to the folder's current UIDVALIDITY epoch)."""
+        with self._lock:
+            uv = self._folder_uidvalidity(folder_id)
+            return {r["uid"] for r in self.conn.execute(
+                "SELECT uid FROM sync_failures WHERE folder_id=? AND uidvalidity=?",
+                (folder_id, uv))}
+
+    def failed_uid_count(self) -> int:
+        with self._lock:
+            return self.conn.execute(
+                "SELECT COUNT(*) FROM sync_failures").fetchone()[0]
+
+    # ------------------------------------------------------ local deletion
+
+    def delete_messages(self, message_ids, folder_id: int = None) -> dict:
+        """Delete message rows from the local archive and report their files.
+
+        Tombstones are recorded for every removed (folder, uid) membership so
+        an ordinary synchronization does not restore a message the user
+        deliberately deleted locally. When ``folder_id`` is given, only that
+        folder's membership is removed; the message row, its EML and its
+        attachments survive while another folder still references it, so a
+        legitimate copy of the same email is never removed.
+
+        Returns the EML/attachment relpaths whose payload files became
+        unreferenced; the caller removes the files themselves.
+        """
+        if not message_ids:
+            return {"messages": 0, "memberships": 0, "attachments": 0, "files": []}
+        ids = [int(i) for i in message_ids if i is not None]
+        placeholders = ",".join("?" * len(ids))
+        with self._lock:
+            links = [dict(r) for r in self.conn.execute(
+                f"SELECT message_id, folder_id, uid FROM message_folders "
+                f"WHERE message_id IN ({placeholders})", ids)]
+            msgs = {r["id"]: dict(r) for r in self.conn.execute(
+                f"SELECT id, content_hash, eml_relpath FROM messages WHERE id IN ({placeholders})",
+                ids)}
+            removed_links = [lk for lk in links
+                             if folder_id is None or lk["folder_id"] == int(folder_id)]
+            for lk in removed_links:
+                uv = self._folder_uidvalidity(lk["folder_id"])
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO deleted_uids (folder_id, uid, uidvalidity, deleted_at) "
+                    "VALUES (?,?,?,?)",
+                    (lk["folder_id"], lk["uid"], uv, utc_now_iso()))
+            if removed_links:
+                self.conn.execute(
+                    f"DELETE FROM message_folders WHERE message_id IN ({placeholders})"
+                    + (" AND folder_id=?" if folder_id is not None else ""),
+                    ids + ([int(folder_id)] if folder_id is not None else []))
+            # A message row is only removed once no folder references it.
+            survivor_rows = self.conn.execute(
+                f"SELECT DISTINCT message_id FROM message_folders "
+                f"WHERE message_id IN ({placeholders})", ids).fetchall()
+            survivors = {r["message_id"] for r in survivor_rows}
+            doomed = [i for i in ids if i in msgs and i not in survivors]
+            files = []
+            attachments = 0
+            if doomed:
+                doomp = ",".join("?" * len(doomed))
+                for mid in doomed:
+                    files.append(msgs[mid]["eml_relpath"])
+                att_rows = self.conn.execute(
+                    f"SELECT message_id, relpath FROM attachments "
+                    f"WHERE message_id IN ({doomp})", doomed).fetchall()
+                attachments = len(att_rows)
+                files.extend(r["relpath"] for r in att_rows if r["relpath"])
+                self.conn.execute(
+                    f"DELETE FROM recipients WHERE message_id IN ({doomp})", doomed)
+                self.conn.execute(
+                    f"DELETE FROM attachments WHERE message_id IN ({doomp})", doomed)
+                self.conn.execute(
+                    f"DELETE FROM messages WHERE id IN ({doomp})", doomed)
+            self.conn.commit()
+        return {"messages": len(doomed), "memberships": len(removed_links),
+                "attachments": attachments, "files": files}
+
+    def referenced_attachment_paths(self, relpaths: list) -> set:
+        """Subset of relpaths still referenced by at least one attachment row.
+
+        Files referenced by a surviving message are never deleted."""
+        if not relpaths:
+            return set()
+        with self._lock:
+            marks = ",".join("?" * len(relpaths))
+            return {r["relpath"] for r in self.conn.execute(
+                f"SELECT DISTINCT relpath FROM attachments WHERE relpath IN ({marks})",
+                list(relpaths))}
 
     # ------------------------------------------------------------- ingestion
 
@@ -478,7 +675,14 @@ class ArchiveDB:
                        SELECT COUNT(*) FROM contacts c WHERE c.domain=organizations.domain)""")
 
     def advance_checkpoint(self, folder_id: int, uid: int):
-        """Only called after a batch fully succeeds — never past failed work."""
+        """Advance the folder's UID watermark over completed work.
+
+        Called with the highest UID actually completed in a batch. UIDs below
+        the watermark that failed are kept eligible for the next
+        synchronization by the ``sync_failures`` table, and UIDs the user
+        deleted locally are suppressed by ``deleted_uids``; the watermark
+        itself is monotonic and only ever moves forward.
+        """
         with self._lock:
             self.conn.execute(
                 "UPDATE folders SET last_completed_uid=? WHERE id=? AND last_completed_uid<?",

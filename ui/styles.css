@@ -360,6 +360,55 @@ body[dir="rtl"] { direction: rtl; }
   padding: 0 6px; font-size: 10.5px; font-weight: 600; white-space: nowrap; }
 .att-badge .ic { width: 11px; height: 11px; }
 
+/* Multi-selection in the message list: a checkbox column appears only in
+   selection mode, keeping ordinary browsing exactly as before. */
+.selection-bar { display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+  background: var(--surface-2); border-bottom: 1px solid var(--border);
+  font-size: 12px; flex-wrap: wrap; }
+.selection-bar .sel-count { display: inline-flex; align-items: center; gap: 6px;
+  font-weight: 700; color: var(--primary); }
+.selection-bar .sel-count .ic { width: 15px; height: 15px; }
+.selection-bar .btn { flex: 0 0 auto; }
+.selection-bar .btn-danger { margin-inline-start: auto; }
+.msg-check { flex: 0 0 auto; width: 18px; height: 18px; align-self: center;
+  margin-inline-end: 2px; border: 1.5px solid var(--border-strong); border-radius: 5px;
+  background: var(--surface); cursor: pointer; padding: 0; font: inherit;
+  display: inline-flex; align-items: center; justify-content: center; }
+.msg-check .ic { width: 12px; height: 12px; color: var(--surface); }
+.msg-check.on { background: var(--primary); border-color: var(--primary); }
+/* Selection mode adds a leading checkbox column and shifts the two existing
+   columns right, keeping the base row layout (sender/date, subject/meta,
+   spanning preview) exactly as it is. */
+.message-row.selecting { grid-template-columns: auto 1fr auto; }
+.message-row.selecting .msg-check { grid-row: 1 / 3; grid-column: 1; }
+.message-row.selecting .msg-sender { grid-column: 2; }
+.message-row.selecting .msg-date { grid-column: 3; grid-row: 1; }
+.message-row.selecting .msg-subject { grid-column: 2; }
+.message-row.selecting .msg-meta { grid-column: 3; grid-row: 2; }
+.message-row.selecting .msg-preview { grid-column: 2 / -1; }
+.message-row.selected { background: var(--primary-soft); }
+.message-row.selected:hover { background: var(--primary-soft); }
+
+/* The two account-removal options presented side by side in one dialog. */
+.remove-opt { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  margin-bottom: 8px; background: var(--surface); }
+.remove-opt.danger { border-color: var(--danger); background: var(--danger-soft); }
+.remove-opt-label { font-size: 12.5px; font-weight: 700; color: var(--text); }
+.remove-opt.danger .remove-opt-label { color: var(--danger); }
+.remove-opt-desc { font-size: 11.5px; color: var(--muted); line-height: 1.5; }
+
+/* Per-item details of a partial synchronization. */
+.failed-items-block { margin-top: 12px; border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); overflow: hidden; }
+.failed-items-title { padding: 7px 10px; font-size: 11.5px; font-weight: 700;
+  background: var(--danger-soft); color: var(--danger); }
+.failed-item { display: flex; gap: 8px; padding: 5px 10px; font-size: 11px;
+  border-top: 1px solid var(--border); color: var(--muted); }
+.failed-item .failed-folder { font-weight: 700; color: var(--text); flex: 0 0 auto; }
+.failed-item .failed-uid { flex: 0 0 auto; }
+.failed-item .failed-reason { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .pagination { display: flex; align-items: center; justify-content: center; gap: 12px;
   padding: 8px; background: var(--surface); border-top: 1px solid var(--border);
   font-size: 12px; color: var(--muted); flex-wrap: wrap; }
