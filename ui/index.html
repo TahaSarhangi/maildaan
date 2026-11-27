@@ -440,6 +440,20 @@
        relative to the sidebar's update icon, and always inside the window. -->
   <div class="update-popover hidden" id="updatePopover" role="dialog"
        aria-label="Updates"></div>
+  <!-- Shown the instant the user confirms installing an update: MailDaan is
+       about to close and reopen, so the whole window states that plainly
+       instead of freezing with no feedback. Removed only when the hand-off
+       fails (declined elevation, error), in which case the app stays usable. -->
+  <div id="updateOverlay" class="update-overlay hidden" role="status"
+       aria-live="polite">
+    <div class="update-card">
+      <div class="update-title" id="updOvTitle"></div>
+      <div class="update-version" id="updOvVersion"></div>
+      <div class="update-body" id="updOvBody"></div>
+      <div class="upd-message"><span class="upd-spinner"></span>
+        <span id="updOvStage"></span></div>
+    </div>
+  </div>
   <div id="modalOverlay" class="modal-overlay hidden">
     <div class="modal-card" id="modalCard"></div>
   </div>

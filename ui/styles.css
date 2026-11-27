@@ -457,6 +457,14 @@ mark { background: var(--primary-soft); color: var(--primary);
   overflow-wrap: break-word; unicode-bidi: plaintext; font-family: inherit;
   max-height: 48vh; overflow-y: auto;
 }
+/* The message viewer is a reading surface: the subject, the address/date
+   block and the body must be selectable and copyable with a normal text
+   cursor. pywebview's injected 'user-select: none' is turned off at the
+   window level (text_select=True); these rules keep the intent explicit
+   for the viewer so no later inherited restriction can silence it. */
+.detail-subject, .detail-meta, .detail-body {
+  user-select: text; -webkit-user-select: text; cursor: text;
+}
 .html-frame { width: 100%; min-height: 240px; max-height: 48vh;
   border: 1px solid var(--border); border-radius: var(--radius); background: #fff; }
 .html-notice { font-size: 11.5px; color: var(--muted); margin: 6px 0 10px; }
@@ -549,6 +557,26 @@ mark { background: var(--primary-soft); color: var(--primary);
 .modal-input { width: 100%; margin-top: 10px; padding: 8px 10px;
   border: 1px solid var(--border-strong); border-radius: var(--radius);
   font-size: 13px; font-family: inherit; background: var(--surface); color: var(--text); }
+
+/* Full-window progress overlay for the update hand-off. It sits above the
+   modal layer (the app is closing anyway) and carries no buttons: the only
+   exit is the application restarting, or a failed hand-off removing it. */
+.update-overlay {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(10, 18, 30, .55);
+  display: flex; align-items: center; justify-content: center;
+}
+.update-card {
+  background: var(--surface); border-radius: var(--radius-lg);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .3);
+  padding: 26px 28px; width: 440px; max-width: 92vw; text-align: start;
+}
+.update-card .update-title { font-size: 17px; font-weight: 700; margin: 0 0 6px; }
+.update-card .update-version { font-size: 13px; font-weight: 700;
+  color: var(--primary); margin: 0 0 12px; unicode-bidi: plaintext; }
+.update-card .update-body { font-size: 13px; color: var(--muted);
+  line-height: 1.6; margin: 0 0 18px; overflow-wrap: anywhere; }
+.update-card .upd-message { font-size: 13px; color: var(--text); }
 
 /* Create Report dialog: a wider card holding the purpose / scope / content
    configuration. Nothing is generated until the user confirms here. */

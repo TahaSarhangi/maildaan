@@ -262,6 +262,11 @@
     "saveAttachment": "Save",
     "saveAllAttachments": "Save All",
     "saveEml": "Save original message (.eml)",
+    "exportPdf": "Save as PDF",
+    "exportPng": "Save as PNG",
+    "exportTruncated": "The rest of the message is not shown in the image export. Use the PDF export for the full message.",
+    "emptyBody": "(empty message)",
+    "exportFooter": "Exported with MailDaan {version} on {date}",
     "noSubject": "(No subject)",
     "notFound": "Message not found.",
     "htmlNotice": "This message has no plain-text part. Displayed from original HTML with scripts and remote content disabled.",
@@ -410,7 +415,13 @@
     "syncBlockedBody": "The update cannot be installed while an email synchronization is running, because MailDaan must close to apply it. Cancel the synchronization first, or install the update later.",
     "cancelSyncAndInstall": "Cancel Sync & Install",
     "cancellingSync": "Cancelling the synchronization… The verified update will be installed as soon as it is safe.",
-    "cancelFailed": "The synchronization is still running. The update stays ready — install it after the synchronization finishes."
+    "cancelFailed": "The synchronization is still running. The update stays ready — install it after the synchronization finishes.",
+    "progressTitle": "Updating MailDaan",
+    "versionLabel": "MailDaan {version}",
+    "progressBody": "Preparing the installation. MailDaan will close and reopen automatically to complete the update.",
+    "stagePreparing": "Preparing the installation…",
+    "stageLaunching": "Launching the installer… Windows may ask for permission to continue.",
+    "alreadyInstalling": "The update is already being prepared. Wait for the installer to appear."
   },
 
   "common": {

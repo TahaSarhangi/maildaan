@@ -8,7 +8,7 @@ search and export your email — **completely offline**.
 **Language:** [English](README.md) · [فارسی (Persian)](README.fa.md)
 
 - **Developer:** Titanium — https://github.com/TahaSarhangi
-- **Version:** 1.4.0
+- **Version:** 1.4.1
 - **License:** MIT (see [LICENSE](LICENSE))
 
 ## Why MailDaan
@@ -39,8 +39,11 @@ an existing archive, never needs one.
   releases, lights up a badge when one is available, shows the download as a circular
   progress ring with a live percentage, verifies the installer against its published
   SHA-256 checksum, and then asks explicitly before installing: **Install now** or
-  **Remind me later**. It never installs while a synchronization is running and never
-  cancels one without your consent.
+  **Remind me later**. The moment you choose **Install now**, a progress card appears
+  immediately — naming the version being installed and explaining that MailDaan will
+  close and reopen by itself — before the installer is ever launched, and the action can
+  never be triggered twice at once. It never installs while a synchronization is running
+  and never cancels one without your consent.
 - **Clear bilingual errors** — every failure (connection, IMAP, certificate, export, …)
   is reported as a concrete, human-readable message in Persian or English instead of a
   raw technical error.
@@ -54,6 +57,16 @@ an existing archive, never needs one.
 - **Professional desktop interface** — persistent sidebar, three-pane archive explorer
   (folders / message list / message detail), light and dark themes, bundled Vazirmatn font
   for the Persian UI, switchable between Persian (RTL) and English (LTR) at any time.
+- **Selectable, copyable message text** — the subject, correspondents, date and body of an
+  open message are ordinary selectable text: drag to select and copy with Ctrl+C (or the
+  context menu) in both Persian (RTL) and English (LTR) layouts, for plain-text and
+  HTML messages alike.
+- **Single-message PDF/PNG export** — any open message can be saved from its toolbar as a
+  **PDF** document or a **PNG** image, laid out for reading with the subject, date,
+  sender, recipients (To/Cc when present) and body, including Persian, English and mixed
+  right-to-left/left-to-right content. The suggested filename is built from the subject
+  and date; everything renders locally, and the original `.eml` export stays available
+  alongside it.
 - **Customizable Excel reports** — a dedicated report dialog lets you choose the
   purpose (comprehensive, activity, contacts, domains or messages), the exact
   scope (date range, folders, direction, drafts handling and an optional
@@ -81,7 +94,7 @@ an existing archive, never needs one.
 
 ## Completely offline installer
 
-`MailDaan-Setup-1.4.0.exe` is a single, fully self-contained setup program:
+`MailDaan-Setup-1.4.1.exe` is a single, fully self-contained setup program:
 
 - It embeds the official **Microsoft Edge WebView2 Fixed Version Runtime (x64)** and uses
   that private copy, so setup **never installs, downloads or asks for** a system WebView2
@@ -109,10 +122,10 @@ has been blurred so no user data is exposed.
 
 ## Download and install
 
-1. Download **`MailDaan-Setup-1.4.0.exe`** from the
+1. Download **`MailDaan-Setup-1.4.1.exe`** from the
    [Releases](https://github.com/TahaSarhangi/maildaan/releases) page.
 2. Run it — no internet connection is required. Verify the download anytime against the
-   published `MailDaan-Setup-1.4.0.exe.sha256` checksum file.
+   published `MailDaan-Setup-1.4.1.exe.sha256` checksum file.
 3. Launch **MailDaan** from the Start Menu (an optional desktop shortcut is offered).
 
 Your archive is stored separately in `%LOCALAPPDATA%\MailDaan` and survives updates and
@@ -138,6 +151,28 @@ uninstallations.
 6. **Create an Excel report** (optional) — open the report dialog, pick the purpose and
    scope (dates, folders, direction, drafts, keyword) and the sheets you want, and
    generate a formatted bilingual workbook with summaries, charts and statistics.
+
+## What's new in 1.4.1
+
+- **Immediate feedback when installing an update** — after choosing **Install now**, a
+  progress card appears instantly showing the version being installed and explaining that
+  MailDaan closes and reopens by itself, instead of the window simply freezing until the
+  Windows permission prompt appears. The install action can no longer be triggered twice
+  at the same time, and if the installer cannot be started (or its permission prompt is
+  declined) the application stays open, returns to a usable state, and reports the
+  failure in Persian or English — never silently claiming success.
+- **Selectable, copyable text in the message viewer** — the subject, sender and
+  recipients, date and body of an open message are now ordinary selectable text. Drag to
+  select and copy with Ctrl+C or the context menu, for plain-text and HTML messages, in
+  Persian (right-to-left), English (left-to-right) and mixed content. This change does
+  not affect message-list selection (click, Ctrl-click, Shift-click, checkbox mode) or
+  any other control.
+- **Save a single message as PDF or PNG** — the open message view now offers **Save as
+  PDF** and **Save as PNG** next to the existing `.eml` export. Both produce a readable
+  rendering of that one message — subject, date, sender, recipients (To/Cc when present)
+  and body — including Persian, English and mixed right-to-left/left-to-right text, with
+  a suggested filename built from the subject and date. Everything is rendered locally on
+  your own machine.
 
 ## What's new in 1.4.0
 

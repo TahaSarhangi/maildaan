@@ -47,6 +47,7 @@ const state = {
     checked: false,        // at least one check has completed
     popoverOpen: false,
     installPrompted: false, // one "install now / later" prompt per completed download
+    installing: false,     // a hand-off to the installer is in progress
   },
   pendingUpdateVersion: null, // version recorded when the installer was started
 };
@@ -914,6 +915,10 @@ async function openMessage(id) {
     '<div class="detail-actions">' +
     '<button class="btn btn-primary small" id="btnSaveEml">' + icon("file") +
       esc(t("viewer.saveEml", "Save original message (.eml)")) + "</button>" +
+    '<button class="btn small" id="btnExportPdf">' + icon("file") +
+      esc(t("viewer.exportPdf", "Save as PDF")) + "</button>" +
+    '<button class="btn small" id="btnExportPng">' + icon("download") +
+      esc(t("viewer.exportPng", "Save as PNG")) + "</button>" +
     '<button class="btn btn-danger small" id="btnDeleteMessage" title="' +
       esc(t("viewer.deleteTitle", "Delete from the local archive")) + '">' + icon("trash") +
       esc(t("viewer.delete", "Delete")) + "</button>" +
@@ -943,6 +948,12 @@ async function openMessage(id) {
   const dlMissing = $("btnDownloadMissingAtt");
   if (dlMissing) dlMissing.addEventListener("click", () => downloadMissingAttachments([id]));
   $("btnSaveEml").addEventListener("click", () => api().saveEml(id).then((r) => fileResult(r)));
+  const exportPdf = $("btnExportPdf");
+  if (exportPdf) exportPdf.addEventListener("click", () =>
+    api().exportMessage(id, "pdf").then((r) => fileResult(r)));
+  const exportPng = $("btnExportPng");
+  if (exportPng) exportPng.addEventListener("click", () =>
+    api().exportMessage(id, "png").then((r) => fileResult(r)));
   const delBtn = $("btnDeleteMessage");
   if (delBtn) delBtn.addEventListener("click", () =>
     deleteMessagesFromArchive([id], !!state.filters.folder_id));
@@ -2200,6 +2211,16 @@ function promptInstallUpdate() {
 }
 
 async function attemptUpdateInstall() {
+  // Never hand off to the installer twice: a second click (double click,
+  // popover + modal, or a retry while the elevation prompt is up) must not
+  // launch a second installer. The backend carries the same guard.
+  if (state.update.installing) return;
+  state.update.installing = true;
+  // Immediate, honest feedback BEFORE any blocking backend call: the moment
+  // the user confirms, the application is visibly updating. Everything the
+  // app does from here on is milliseconds of preparation, but the user must
+  // never watch a frozen window while waiting for the installer to appear.
+  showUpdateInstallOverlay();
   if (state.update.popoverOpen) closeUpdatePopover();
   // An active email backup must never be interrupted: verify with the
   // backend that no synchronization is running before anything is closed.
@@ -2211,6 +2232,8 @@ async function attemptUpdateInstall() {
     syncRunning = false;
   }
   if (syncRunning) {
+    state.update.installing = false;
+    hideUpdateInstallOverlay();
     showUpdateSyncBlocked();
     return;
   }
@@ -2266,20 +2289,24 @@ async function cancelSyncThenInstall() {
 }
 
 async function runInstall() {
-  if (state.update.popoverOpen) {
-    const actions = $("updatePopover").querySelector(".upd-actions");
-    if (actions) actions.innerHTML = '<span class="upd-spinner"></span><span>' +
-      esc(t("update.installing", "Installing…")) + "</span>";
-    placeUpdatePopover();
-  }
+  // Both entry points (the ready-modal and the cancel-sync-then-install
+  // path) funnel through here; make sure the progress overlay is up and
+  // mark the hand-off stage. The stage only ever describes what the app is
+  // genuinely doing — no simulated installer progress is shown.
+  if (!state.update.installing) state.update.installing = true;
+  showUpdateInstallOverlay();
+  setUpdateStage("update.stageLaunching", "Launching the installer…");
   let res = null;
   try {
     res = await api().installUpdate();
   } catch (e) {
     res = { error: "install" };
   }
-  // On success the application exits and the installer takes over.
+  // On success the application exits and the installer takes over; the
+  // overlay stays on the last honest stage until the window disappears.
   if (res && (res.error || res.error_key)) {
+    state.update.installing = false;
+    hideUpdateInstallOverlay();
     // The backend refuses to interrupt an active synchronization — never
     // an automatic cancellation. Offer the same choice as before.
     if (res.error_key === "update.syncRunning") {
@@ -2294,6 +2321,32 @@ async function runInstall() {
     if (state.update.popoverOpen) renderUpdatePopover();
     else toast("<div>" + esc(state.update.error) + "</div>", "error");
   }
+}
+
+/* Full-application overlay shown from the moment the user confirms the
+   install. It states the target version, explains that MailDaan will close
+   and reopen by itself, and carries one honest stage line. The spinner is
+   indeterminate on purpose: the application is preparing a hand-off, not
+   running an installation, so no percentage is ever implied. */
+function showUpdateInstallOverlay() {
+  const version = String(state.update.version || "").replace(/^v/i, "");
+  $("updOvTitle").textContent = t("update.progressTitle", "Updating MailDaan");
+  $("updOvVersion").textContent = version
+    ? t("update.versionLabel", "MailDaan {version}").replace("{version}", version)
+    : "";
+  $("updOvBody").textContent = t("update.progressBody",
+    "Preparing the installation. MailDaan will close and reopen automatically to complete the update.");
+  setUpdateStage("update.stagePreparing", "Preparing the installation…");
+  $("updateOverlay").classList.remove("hidden");
+}
+
+function setUpdateStage(key, fallback) {
+  const node = $("updOvStage");
+  if (node) node.textContent = t(key, fallback);
+}
+
+function hideUpdateInstallOverlay() {
+  $("updateOverlay").classList.add("hidden");
 }
 
 async function loadSettingsForms() {

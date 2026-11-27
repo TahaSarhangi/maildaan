@@ -22,7 +22,7 @@
 ; ============================================================================
 
 #ifndef MyAppVersion
-  #define MyAppVersion "1.4.0"
+  #define MyAppVersion "1.4.1"
 #endif
 
 #define AppIdGuid "{{F8FF4FD1-7339-4E20-B086-F2E1D3428142}"

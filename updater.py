@@ -61,6 +61,12 @@ class UpdateManager:
         self.downloading = False
         self.progress = {"running": False, "downloaded": 0, "total": 0, "percent": 0}
         self.last_check = 0
+        # Guards install() against a second hand-off while one is already in
+        # progress: two rapid "install" requests must never launch two
+        # elevated installers. Cleared again only when the hand-off failed,
+        # so a genuine retry stays possible.
+        self._installing = False
+        self._install_lock = threading.Lock()
         self._load_last_check()
 
     def _load_last_check(self):
@@ -176,7 +182,15 @@ class UpdateManager:
         return result
 
     def install(self):
+        with self._install_lock:
+            if self._installing:
+                # A hand-off is already in progress (double click, or a
+                # retry while the elevation prompt is still up): never start
+                # a second installer.
+                return {"error_key": "update.alreadyInstalling"}
+            self._installing = True
         if not self.download_path or not os.path.exists(self.download_path):
+            self._installing = False
             return {"error": "installer not verified"}
         if self.api.sync_running():
             # Never interrupt an active synchronization: an update is only
@@ -184,6 +198,7 @@ class UpdateManager:
             # backup is in progress. The verified installer stays cached so
             # the user can install once the synchronization has finished or
             # been cancelled.
+            self._installing = False
             return {"error_key": "update.syncRunning"}
         try:
             _launch_installer(self.download_path)
@@ -192,6 +207,7 @@ class UpdateManager:
             # be started: keep MailDaan open and say so instead of closing
             # silently with nothing installed.
             LOG.error("could not start the verified update installer: %s", exc)
+            self._installing = False
             return {"error_key": "update.launchFailed"}
         # Remember the version handed over to the installer. The next MailDaan
         # start compares its own APP_VERSION against this value and reports

@@ -23,6 +23,7 @@ import accounts
 import applock
 import config
 import dialogs
+import email_export
 import export
 import imap_sync
 import imaptls
@@ -686,6 +687,25 @@ class AppApi:
 
     @requires_unlock
     @user_facing
+    def exportMessage(self, message_id, fmt):
+        """Export the currently opened message as a PDF document or a PNG
+        image (subject, correspondents, date and body). The Save As dialog
+        and the rendering live in email_export; the Excel report builder is
+        not involved. Returns None when the user cancels the dialog."""
+        if fmt not in ("pdf", "png"):
+            return {"error_key": "common.saveFailed"}
+        account, paths = self._active_paths()
+        if account is None:
+            return {"error_key": "common.saveFailed"}
+        with storage.ArchiveDB(paths["db"]) as db:
+            msg = db.get_message(int(message_id))
+        if not msg:
+            return {"error_key": "common.saveFailed"}
+        lang = (self.settings or {}).get("language") or "en"
+        return email_export.export_message(msg, lang, fmt)
+
+    @requires_unlock
+    @user_facing
     def downloadMissingAttachments(self, message_ids, password=None):
         """Download attachment payloads for previously skipped messages.
 
@@ -1043,6 +1063,11 @@ def main():
             height=840,
             min_size=(960, 600),
             confirm_close=False,
+            # pywebview disables text selection by default (it injects
+            # 'body { user-select: none; cursor: default }'). MailDaan is an
+            # email *reader*: the subject, addresses, date and message body
+            # must be selectable and copyable, with a normal text cursor.
+            text_select=True,
         )
 
         def on_closing():
