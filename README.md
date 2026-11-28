@@ -8,7 +8,7 @@ search and export your email — **completely offline**.
 **Language:** [English](README.md) · [فارسی (Persian)](README.fa.md)
 
 - **Developer:** Titanium — https://github.com/TahaSarhangi
-- **Version:** 1.4.1
+- **Version:** 1.4.2
 - **License:** MIT (see [LICENSE](LICENSE))
 
 ## Why MailDaan
@@ -94,7 +94,7 @@ an existing archive, never needs one.
 
 ## Completely offline installer
 
-`MailDaan-Setup-1.4.1.exe` is a single, fully self-contained setup program:
+`MailDaan-Setup-1.4.2.exe` is a single, fully self-contained setup program:
 
 - It embeds the official **Microsoft Edge WebView2 Fixed Version Runtime (x64)** and uses
   that private copy, so setup **never installs, downloads or asks for** a system WebView2
@@ -122,10 +122,10 @@ has been blurred so no user data is exposed.
 
 ## Download and install
 
-1. Download **`MailDaan-Setup-1.4.1.exe`** from the
+1. Download **`MailDaan-Setup-1.4.2.exe`** from the
    [Releases](https://github.com/TahaSarhangi/maildaan/releases) page.
 2. Run it — no internet connection is required. Verify the download anytime against the
-   published `MailDaan-Setup-1.4.1.exe.sha256` checksum file.
+   published `MailDaan-Setup-1.4.2.exe.sha256` checksum file.
 3. Launch **MailDaan** from the Start Menu (an optional desktop shortcut is offered).
 
 Your archive is stored separately in `%LOCALAPPDATA%\MailDaan` and survives updates and
@@ -151,6 +151,30 @@ uninstallations.
 6. **Create an Excel report** (optional) — open the report dialog, pick the purpose and
    scope (dates, folders, direction, drafts, keyword) and the sheets you want, and
    generate a formatted bilingual workbook with summaries, charts and statistics.
+
+## What's new in 1.4.2
+
+- **Correct PDF image export** — the file produced by *Save as PDF* was severely
+  distorted in every PDF reader. The embedded image declared the PNG row predictor,
+  but its rows were written unfiltered, so readers applied an inverse PNG-Sub
+  transform to already-correct pixels and smeared every page — horizontal
+  distortion, repeated gray gradients and wrong colors, in Persian, English and
+  mixed content alike. The image data is now written as plain, tightly packed RGB
+  rows compressed with Flate and no predictor at all, so every page renders
+  exactly as MailDaan drew it, on single-page and multi-page exports.
+- **Language preference is preserved** — on some installations the
+  language-selection dialog reappeared on every start even though a language had
+  already been chosen. The application writes its settings with a
+  load → modify → save sequence, and several interface actions (the background
+  update check, adding or selecting an account, …) can run that same sequence at
+  the very moment the language is chosen, each on its own thread; whichever
+  writer finished last silently overwrote the other's change and the stored
+  language disappeared, while accounts, archives and every other preference
+  remained intact. Every settings change is now applied atomically from the
+  file's current contents under a single lock, so a concurrent action can never
+  revert another one — the chosen language survives restarts, Windows restarts
+  and upgrades. Manual language switching is unchanged, and a valid stored
+  preference is never overwritten with defaults.
 
 ## What's new in 1.4.1
 

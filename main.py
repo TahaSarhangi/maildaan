@@ -183,10 +183,18 @@ class AppApi:
         account = accounts.get_account(self.settings.get("active_account_id"))
         if account is None:
             registry = accounts.all_accounts()
-            account = registry[0] if registry else None
-            if account:
-                self.settings["active_account_id"] = account["id"]
-                config.save_settings(self.settings)
+            fallback = registry[0] if registry else None
+            if fallback:
+                # Adopted atomically from the file's current contents: the
+                # fallback is applied only when the file itself has no
+                # resolvable active account, so a valid stored preference is
+                # never overwritten by this snapshot save.
+                def _adopt(s, cid=fallback["id"]):
+                    if not accounts.get_account(s.get("active_account_id")):
+                        s["active_account_id"] = cid
+                self.settings = config.update_settings(_adopt)
+                account = accounts.get_account(
+                    self.settings.get("active_account_id")) or fallback
         return account
 
     def _active_paths(self):
@@ -198,17 +206,18 @@ class AppApi:
     def setLanguage(self, lang):
         if lang not in ("fa", "en"):
             return {"error": "invalid language"}
-        self.settings = config.load_settings()
-        self.settings["language"] = lang
-        config.save_settings(self.settings)
+        # Atomic load -> modify -> save: the choice is merged into whatever
+        # the settings file currently holds and can never be reverted by a
+        # concurrent writer.
+        self.settings = config.update_settings(
+            lambda s: s.update(language=lang))
         return {"ok": True}
 
     def setTheme(self, theme):
         if theme not in ("light", "dark"):
             return {"error": "invalid theme"}
-        self.settings = config.load_settings()
-        self.settings["theme"] = theme
-        config.save_settings(self.settings)
+        self.settings = config.update_settings(
+            lambda s: s.update(theme=theme))
         return {"ok": True}
 
     @requires_unlock
@@ -235,8 +244,13 @@ class AppApi:
             return {"error_key": "accounts.createFailed",
                     "error_detail": str(exc)}
         if not self.settings.get("active_account_id"):
-            self.settings["active_account_id"] = account["id"]
-            config.save_settings(self.settings)
+            # The first configured account becomes the active one; merged
+            # into the file's current contents so no other setting is
+            # overwritten by this default.
+            def _first(s, aid=account["id"]):
+                if not s.get("active_account_id"):
+                    s["active_account_id"] = aid
+            self.settings = config.update_settings(_first)
         return {"ok": True, "account": accounts.public_account(account)}
 
     @requires_unlock
@@ -294,8 +308,11 @@ class AppApi:
         self.settings = config.load_settings()
         if self.settings.get("active_account_id") == account_id:
             registry = accounts.all_accounts()
-            self.settings["active_account_id"] = registry[0]["id"] if registry else None
-            config.save_settings(self.settings)
+            next_id = registry[0]["id"] if registry else None
+            def _fix_active(s, removed=account_id, nid=next_id):
+                if s.get("active_account_id") == removed:
+                    s["active_account_id"] = nid
+            self.settings = config.update_settings(_fix_active)
         return {"ok": True, "bytes": bytes_deleted}
 
     @requires_unlock
@@ -378,9 +395,8 @@ class AppApi:
         account = accounts.get_account(account_id)
         if account is None:
             return {"error_key": "accounts.notFound"}
-        self.settings = config.load_settings()
-        self.settings["active_account_id"] = account_id
-        config.save_settings(self.settings)
+        self.settings = config.update_settings(
+            lambda s: s.update(active_account_id=account_id))
         return {"ok": True, "account": accounts.public_account(account)}
 
     # ------------------------------------------------------------- syncing
@@ -401,9 +417,8 @@ class AppApi:
         port = account.get("imap_port") or 993
         if not host or not account.get("email") or not password:
             return {"error_key": "config.fillAllFields"}
-        self.settings = config.load_settings()
-        self.settings["active_account_id"] = account_id
-        config.save_settings(self.settings)
+        self.settings = config.update_settings(
+            lambda s: s.update(active_account_id=account_id))
         self.sync_account_id = account_id
         self._password = password
         self.cancel_event = threading.Event()
@@ -907,10 +922,8 @@ class AppApi:
         at most once. The restarted application calls this after it has
         presented (or deliberately not presented) the verification result."""
         try:
-            settings = config.load_settings()
-            if "pending_update_version" in settings:
-                del settings["pending_update_version"]
-                config.save_settings(settings)
+            config.update_settings(
+                lambda s: s.pop("pending_update_version", None))
         except Exception:
             logger.info("could not clear the pending update record")
         return {"ok": True}

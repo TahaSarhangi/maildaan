@@ -7,9 +7,10 @@ inside the application source or executable directory.
 import json
 import os
 import sys
+import threading
 
 APP_NAME = "MailDaan"
-APP_VERSION = "1.4.1"
+APP_VERSION = "1.4.2"
 DEVELOPER = "Titanium"
 DEVELOPER_URL = "https://github.com/TahaSarhangi"
 COPYRIGHT = "© 2026 MailDaan"
@@ -64,6 +65,17 @@ DEFAULT_SETTINGS = {
     "active_account_id": None,
 }
 
+# pywebview executes every JavaScript bridge call on its own thread, so two
+# settings writes reachable from the interface (setLanguage, the background
+# update check, addAccount, ...) can overlap inside Python. A load ->
+# modify -> save built from a snapshot taken earlier then silently reverts
+# the other writer's change — exactly how a stored language preference could
+# disappear while accounts, archives and the rest of the settings stayed
+# intact. Every settings mutation therefore goes through update_settings(),
+# which performs the whole sequence under one re-entrant lock and always
+# starts from what is currently on disk.
+_settings_lock = threading.RLock()
+
 
 def _load_json(path):
     if not os.path.exists(path):
@@ -77,26 +89,50 @@ def _load_json(path):
 
 def load_settings() -> dict:
     """Load application settings, adopting the 1.0 settings file once."""
-    settings = dict(DEFAULT_SETTINGS)
-    saved = _load_json(get_settings_path())
-    if isinstance(saved, dict):
-        settings.update(saved)
+    with _settings_lock:
+        settings = dict(DEFAULT_SETTINGS)
+        saved = _load_json(get_settings_path())
+        if isinstance(saved, dict):
+            settings.update(saved)
+            return settings
+        legacy = _load_json(os.path.join(get_legacy_data_dir(), "settings.json"))
+        if isinstance(legacy, dict) and legacy.get("language") in ("fa", "en"):
+            settings["language"] = legacy["language"]
+            if legacy.get("theme") in ("light", "dark"):
+                settings["theme"] = legacy["theme"]
         return settings
-    legacy = _load_json(os.path.join(get_legacy_data_dir(), "settings.json"))
-    if isinstance(legacy, dict) and legacy.get("language") in ("fa", "en"):
-        settings["language"] = legacy["language"]
-        if legacy.get("theme") in ("light", "dark"):
-            settings["theme"] = legacy["theme"]
-    return settings
 
 
 def save_settings(settings: dict) -> None:
     path = get_settings_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(settings, fh, ensure_ascii=False, indent=2)
-    os.replace(tmp, path)
+    with _settings_lock:
+        # A per-thread temporary name keeps concurrent writers from sharing
+        # one file; os.replace then publishes each write atomically, so no
+        # reader can ever observe a partially written settings file.
+        tmp = "%s.%d.tmp" % (path, threading.get_ident())
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(settings, fh, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+
+
+def update_settings(mutator=None) -> dict:
+    """Atomically load, mutate and save the application settings.
+
+    `mutator(settings)` may change the dict in place and returns nothing.
+    The whole load -> mutate -> save runs under the settings lock, so
+    overlapping bridge threads can never interleave their writes, and the
+    save always starts from the file's current contents: a valid preference
+    (language, theme, ...) is never silently overwritten with a stale
+    in-memory snapshot or with defaults. Missing or invalid settings are
+    simply re-created from the defaults, exactly as load_settings() does.
+    """
+    with _settings_lock:
+        settings = load_settings()
+        if mutator is not None:
+            mutator(settings)
+        save_settings(settings)
+        return settings
 
 
 def _packaged_base() -> str:

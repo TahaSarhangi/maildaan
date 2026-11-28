@@ -225,8 +225,12 @@ def _png_bytes(rgb, width, height, stride):
 def _pdf_bytes(pages):
     """Minimal PDF: every rendered page becomes one full-page RGB image.
 
-    Image streams are Flate-compressed with the PNG row predictor; the page
-    geometry is plain Letter portrait, matching the bitmaps exactly.
+    Image streams are simply Flate-compressed, tightly packed RGB rows: the
+    pixels GDI+ rendered are written exactly as they are, with no predictor
+    and no per-row filter bytes. (An earlier version declared the PNG row
+    predictor but wrote unfiltered data, so readers applied an inverse
+    PNG-Sub transform to already-unfiltered rows and distorted every page.)
+    The page geometry is plain Letter portrait, matching the bitmaps exactly.
     """
     count = len(pages)
     kids = b" ".join(b"%d 0 R" % (3 + index * 3) for index in range(count))
@@ -240,9 +244,11 @@ def _pdf_bytes(pages):
         image_no = page_no + 2
         content = b"q %g 0 0 %g 0 0 cm /Im%d Do Q" % (PAGE_W_PT, PAGE_H_PT,
                                                       index)
+        # Tightly packed, unfiltered RGB rows (any GDI+ stride padding
+        # excluded): 3 bytes per pixel, width*3 per row, height rows.
+        # FlateDecode only — no predictor, so readers render the exact bytes.
         img = bytearray()
         for y in range(height):
-            img.append(1)      # PNG predictor row marker
             img += rgb[y * stride:y * stride + width * 3]
         stream = zlib.compress(bytes(img), 6)
         objects.append(
@@ -255,9 +261,8 @@ def _pdf_bytes(pages):
         objects.append(
             b"<< /Type /XObject /Subtype /Image /Width %d /Height %d "
             b"/ColorSpace /DeviceRGB /BitsPerComponent 8 "
-            b"/Filter /FlateDecode /DecodeParms << /Predictor 15 "
-            b"/Colors 3 /BitsPerComponent 8 /Columns %d >> /Length %d >>\n"
-            b"stream\n" % (width, height, width, len(stream)) +
+            b"/Filter /FlateDecode /Length %d >>\n"
+            b"stream\n" % (width, height, len(stream)) +
             bytes(stream) + b"\nendstream")
 
     out = bytearray(b"%PDF-1.5\n%\xe2\xe3\xcf\xd3\n")

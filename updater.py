@@ -76,9 +76,11 @@ class UpdateManager:
             self.last_check = 0
 
     def _save_last_check(self):
-        settings = config.load_settings()
-        settings["updates_last_check"] = self.last_check
-        config.save_settings(settings)
+        try:
+            config.update_settings(
+                lambda s: s.update(updates_last_check=self.last_check))
+        except Exception:
+            LOG.info("could not record the last update-check time")
 
     def should_check(self):
         return (not self.last_check or __import__("time").time() - self.last_check >= CHECK_INTERVAL)
@@ -219,8 +221,7 @@ class UpdateManager:
 
     def _save_pending_update(self, version):
         try:
-            settings = config.load_settings()
-            settings["pending_update_version"] = version
-            config.save_settings(settings)
+            config.update_settings(
+                lambda s: s.update(pending_update_version=version))
         except Exception:
             LOG.info("could not record the pending update version")
